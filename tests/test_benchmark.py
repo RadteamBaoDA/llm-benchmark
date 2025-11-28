@@ -1104,5 +1104,390 @@ class TestExportResults:
                 assert Path(path).exists()
 
 
+# ==============================================================================
+# Timeseries Tests
+# ==============================================================================
+
+from llm_benchmark.timeseries import (
+    TimeseriesRecord,
+    TimeseriesWriter,
+    TimeseriesReader,
+    load_all_timeseries
+)
+
+
+class TestTimeseriesRecord:
+    """Tests for TimeseriesRecord dataclass."""
+    
+    def test_timeseries_record_creation(self):
+        """Test creating a timeseries record."""
+        record = TimeseriesRecord(
+            timestamp=1700000000.0,
+            elapsed_ms=1500.0,
+            scenario_name="test_scenario",
+            model_name="gpt-4",
+            model_type="chat",
+            request_id=1,
+            latency_ms=150.5,
+            success=True,
+            tokens=100
+        )
+        assert record.timestamp == 1700000000.0
+        assert record.elapsed_ms == 1500.0
+        assert record.scenario_name == "test_scenario"
+        assert record.model_name == "gpt-4"
+        assert record.latency_ms == 150.5
+        assert record.success is True
+        assert record.tokens == 100
+    
+    def test_timeseries_record_to_dict(self):
+        """Test converting record to dict."""
+        record = TimeseriesRecord(
+            timestamp=1700000000.0,
+            elapsed_ms=1500.0,
+            scenario_name="test",
+            model_name="gpt-4",
+            model_type="chat",
+            request_id=1,
+            latency_ms=100.0,
+            success=True
+        )
+        d = record.to_dict()
+        assert isinstance(d, dict)
+        assert d["timestamp"] == 1700000000.0
+        assert d["scenario_name"] == "test"
+
+
+class TestTimeseriesWriter:
+    """Tests for TimeseriesWriter."""
+    
+    def test_writer_csv_creation(self):
+        """Test creating CSV timeseries file."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            writer = TimeseriesWriter(output_dir=tmpdir, format="csv")
+            filepath = writer.start_scenario("test_scenario", "gpt-4")
+            
+            assert filepath.endswith(".csv")
+            assert "test_scenario" in filepath
+            assert "gpt-4" in filepath
+            
+            # End scenario to close file handle
+            writer.end_scenario()
+    
+    def test_writer_record_data(self):
+        """Test recording data to timeseries."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            writer = TimeseriesWriter(output_dir=tmpdir, format="csv")
+            writer.start_scenario("test", "model1")
+            
+            writer.record(
+                scenario_name="test",
+                model_name="model1",
+                model_type="chat",
+                latency=0.15,
+                success=True,
+                tokens=50
+            )
+            
+            writer.record(
+                scenario_name="test",
+                model_name="model1",
+                model_type="chat",
+                latency=0.20,
+                success=False,
+                error="Timeout"
+            )
+            
+            records = writer.end_scenario()
+            assert len(records) == 2
+            assert records[0].latency_ms == 150.0  # Converted to ms
+            assert records[0].success is True
+            assert records[1].success is False
+            assert records[1].error == "Timeout"
+    
+    def test_writer_jsonl_format(self):
+        """Test JSONL format output."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            writer = TimeseriesWriter(output_dir=tmpdir, format="jsonl")
+            filepath = writer.start_scenario("test", "model")
+            
+            writer.record(
+                scenario_name="test",
+                model_name="model",
+                model_type="chat",
+                latency=0.1,
+                success=True
+            )
+            
+            writer.end_scenario()
+            
+            assert filepath.endswith(".jsonl")
+            assert Path(filepath).exists()
+            
+            # Verify content
+            with open(filepath, 'r') as f:
+                import json
+                line = f.readline()
+                data = json.loads(line)
+                assert data["scenario_name"] == "test"
+
+
+class TestTimeseriesReader:
+    """Tests for TimeseriesReader."""
+    
+    def _create_test_csv(self, tmpdir: str) -> str:
+        """Create a test CSV file."""
+        filepath = Path(tmpdir) / "timeseries_test_model_20231115.csv"
+        with open(filepath, 'w', newline='', encoding='utf-8') as f:
+            import csv
+            writer = csv.DictWriter(f, fieldnames=TimeseriesWriter.CSV_HEADERS)
+            writer.writeheader()
+            
+            base_time = 1700000000.0
+            for i in range(10):
+                writer.writerow({
+                    "timestamp": base_time + i * 0.1,
+                    "elapsed_ms": i * 100,
+                    "scenario_name": "test",
+                    "model_name": "model",
+                    "model_type": "chat",
+                    "request_id": i + 1,
+                    "latency_ms": 100 + i * 10,
+                    "success": "True" if i < 8 else "False",
+                    "status_code": "",
+                    "tokens": 50 + i * 5,
+                    "prompt_tokens": 30,
+                    "completion_tokens": 20 + i * 5,
+                    "error": "" if i < 8 else "Error occurred",
+                    "concurrent_requests": 5
+                })
+        return str(filepath)
+    
+    def test_reader_load_csv(self):
+        """Test loading CSV timeseries file."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            filepath = self._create_test_csv(tmpdir)
+            reader = TimeseriesReader(filepath)
+            
+            assert len(reader.records) == 10
+            assert reader.records[0].scenario_name == "test"
+    
+    def test_reader_get_statistics(self):
+        """Test calculating statistics."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            filepath = self._create_test_csv(tmpdir)
+            reader = TimeseriesReader(filepath)
+            stats = reader.get_statistics()
+            
+            assert stats["total_requests"] == 10
+            assert stats["successful_requests"] == 8
+            assert stats["failed_requests"] == 2
+            assert stats["success_rate"] == 80.0
+            assert "latency_avg_ms" in stats
+            assert "latency_p95_ms" in stats
+    
+    def test_reader_get_latency_over_time(self):
+        """Test getting latency over time buckets."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            filepath = self._create_test_csv(tmpdir)
+            reader = TimeseriesReader(filepath)
+            buckets = reader.get_latency_over_time(bucket_size_ms=500)
+            
+            assert len(buckets) > 0
+            assert "elapsed_ms" in buckets[0]
+            assert "avg_latency_ms" in buckets[0]
+    
+    def test_reader_get_latency_distribution(self):
+        """Test getting latency distribution."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            filepath = self._create_test_csv(tmpdir)
+            reader = TimeseriesReader(filepath)
+            dist = reader.get_latency_distribution(bins=10)
+            
+            assert "bins" in dist
+            assert "counts" in dist
+            assert len(dist["bins"]) == 10
+    
+    def test_reader_file_not_found(self):
+        """Test handling non-existent file."""
+        with pytest.raises(FileNotFoundError):
+            TimeseriesReader("/nonexistent/path.csv")
+
+
+class TestLoadAllTimeseries:
+    """Tests for load_all_timeseries function."""
+    
+    def test_load_multiple_files(self):
+        """Test loading multiple timeseries files."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create multiple test files
+            for name in ["scenario1", "scenario2"]:
+                filepath = Path(tmpdir) / f"timeseries_{name}_model.csv"
+                with open(filepath, 'w', newline='', encoding='utf-8') as f:
+                    import csv
+                    writer = csv.DictWriter(f, fieldnames=TimeseriesWriter.CSV_HEADERS)
+                    writer.writeheader()
+                    writer.writerow({
+                        "timestamp": 1700000000.0,
+                        "elapsed_ms": 0,
+                        "scenario_name": name,
+                        "model_name": "model",
+                        "model_type": "chat",
+                        "request_id": 1,
+                        "latency_ms": 100,
+                        "success": "True",
+                        "status_code": "",
+                        "tokens": 50,
+                        "prompt_tokens": 30,
+                        "completion_tokens": 20,
+                        "error": "",
+                        "concurrent_requests": 1
+                    })
+            
+            readers = load_all_timeseries(tmpdir)
+            assert len(readers) == 2
+
+
+# ==============================================================================
+# HTML Report Tests
+# ==============================================================================
+
+from llm_benchmark.html_report import (
+    HTMLReportGenerator,
+    generate_html_report
+)
+
+
+class TestHTMLReportGenerator:
+    """Tests for HTMLReportGenerator."""
+    
+    def _create_test_timeseries(self, tmpdir: str) -> str:
+        """Create a test timeseries file."""
+        filepath = Path(tmpdir) / "timeseries_test_model_20231115.csv"
+        with open(filepath, 'w', newline='', encoding='utf-8') as f:
+            import csv
+            writer = csv.DictWriter(f, fieldnames=TimeseriesWriter.CSV_HEADERS)
+            writer.writeheader()
+            
+            base_time = 1700000000.0
+            for i in range(20):
+                writer.writerow({
+                    "timestamp": base_time + i * 0.1,
+                    "elapsed_ms": i * 100,
+                    "scenario_name": "test_scenario",
+                    "model_name": "gpt-4",
+                    "model_type": "chat",
+                    "request_id": i + 1,
+                    "latency_ms": 100 + i * 5,
+                    "success": "True" if i < 18 else "False",
+                    "status_code": "",
+                    "tokens": 50 + i * 2,
+                    "prompt_tokens": 30,
+                    "completion_tokens": 20 + i * 2,
+                    "error": "" if i < 18 else "Rate limit",
+                    "concurrent_requests": 5
+                })
+        return str(filepath)
+    
+    def test_generate_scenario_report(self):
+        """Test generating a single scenario report."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ts_file = self._create_test_timeseries(tmpdir)
+            reader = TimeseriesReader(ts_file)
+            
+            report_dir = Path(tmpdir) / "reports"
+            generator = HTMLReportGenerator(str(report_dir))
+            report_path = generator.generate_scenario_report(reader)
+            
+            assert Path(report_path).exists()
+            assert report_path.endswith(".html")
+            
+            # Verify content
+            content = Path(report_path).read_text(encoding='utf-8')
+            assert "LLM Benchmark Report" in content
+            assert "test_scenario" in content
+            assert "gpt-4" in content
+            assert "Chart.js" in content  # Charts included
+    
+    def test_generate_index(self):
+        """Test generating index page."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ts_file = self._create_test_timeseries(tmpdir)
+            reader = TimeseriesReader(ts_file)
+            
+            report_dir = Path(tmpdir) / "reports"
+            generator = HTMLReportGenerator(str(report_dir))
+            generator.generate_scenario_report(reader)
+            index_path = generator.generate_index([reader])
+            
+            assert Path(index_path).exists()
+            content = Path(index_path).read_text(encoding='utf-8')
+            assert "Summary" in content
+            assert "test_scenario" in content
+    
+    def test_generate_from_directory(self):
+        """Test generating reports from directory."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._create_test_timeseries(tmpdir)
+            
+            report_dir = Path(tmpdir) / "reports"
+            generator = HTMLReportGenerator(str(report_dir))
+            index_path = generator.generate_from_directory(tmpdir)
+            
+            assert Path(index_path).exists()
+            # Check individual report also created
+            report_files = list(report_dir.glob("report_*.html"))
+            assert len(report_files) >= 1
+
+
+class TestGenerateHTMLReport:
+    """Tests for generate_html_report convenience function."""
+    
+    def _create_test_timeseries(self, tmpdir: str) -> str:
+        """Create a test timeseries file."""
+        filepath = Path(tmpdir) / "timeseries_test_model_20231115.csv"
+        with open(filepath, 'w', newline='', encoding='utf-8') as f:
+            import csv
+            writer = csv.DictWriter(f, fieldnames=TimeseriesWriter.CSV_HEADERS)
+            writer.writeheader()
+            
+            for i in range(10):
+                writer.writerow({
+                    "timestamp": 1700000000.0 + i * 0.1,
+                    "elapsed_ms": i * 100,
+                    "scenario_name": "test",
+                    "model_name": "model",
+                    "model_type": "chat",
+                    "request_id": i + 1,
+                    "latency_ms": 100,
+                    "success": "True",
+                    "status_code": "",
+                    "tokens": 50,
+                    "prompt_tokens": 30,
+                    "completion_tokens": 20,
+                    "error": "",
+                    "concurrent_requests": 1
+                })
+        return str(filepath)
+    
+    def test_generate_from_file(self):
+        """Test generating report from single file."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ts_file = self._create_test_timeseries(tmpdir)
+            report_dir = Path(tmpdir) / "reports"
+            
+            index_path = generate_html_report(ts_file, str(report_dir))
+            assert Path(index_path).exists()
+    
+    def test_generate_from_directory(self):
+        """Test generating report from directory."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._create_test_timeseries(tmpdir)
+            report_dir = Path(tmpdir) / "reports"
+            
+            index_path = generate_html_report(tmpdir, str(report_dir))
+            assert Path(index_path).exists()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

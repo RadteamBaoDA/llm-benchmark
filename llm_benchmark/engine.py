@@ -22,15 +22,26 @@ except ImportError:
 from .config import BenchmarkConfig, ScenarioConfig
 from .metrics import BenchmarkMetrics, MetricsCollector, RequestMetrics
 from .mock_data import MockRequest, get_mock_generator
+from .timeseries import TimeseriesWriter
 
 
 class BenchmarkEngine:
     """Core engine for running LLM benchmarks."""
     
-    def __init__(self, config: BenchmarkConfig):
+    def __init__(self, config: BenchmarkConfig, enable_timeseries: bool = True):
         self.config = config
         self.metrics_collector = MetricsCollector()
         self.client: Optional[httpx.AsyncClient] = None
+        self.enable_timeseries = enable_timeseries
+        self.timeseries_writer: Optional[TimeseriesWriter] = None
+        self.timeseries_files: List[str] = []
+        self._active_requests: int = 0
+        
+        if enable_timeseries:
+            self.timeseries_writer = TimeseriesWriter(
+                output_dir=config.output_dir,
+                format="csv"
+            )
     
     async def _make_request(
         self,
@@ -111,6 +122,16 @@ class BenchmarkEngine:
         print(f"   Requests: {scenario.requests}, Concurrency: {scenario.concurrency}")
         print(f"   Warmup: {scenario.warmup_requests}, Timeout: {scenario.timeout}s")
         
+        # Start timeseries recording
+        timeseries_file = None
+        if self.timeseries_writer:
+            timeseries_file = self.timeseries_writer.start_scenario(
+                scenario.name, 
+                self.config.model.name
+            )
+            print(f"   📊 Timeseries: {timeseries_file}")
+            self.timeseries_files.append(timeseries_file)
+        
         # Create benchmark metrics
         benchmark = self.metrics_collector.create_benchmark(
             model_name=self.config.model.name,
@@ -126,18 +147,39 @@ class BenchmarkEngine:
         
         # Semaphore for concurrency control
         sem = asyncio.Semaphore(scenario.concurrency)
+        self._active_requests = 0
         
         # Use scenario-specific timeout
         request_timeout = scenario.timeout
         
         async def worker(mock_request: MockRequest):
             async with sem:
+                self._active_requests += 1
+                current_concurrent = self._active_requests
+                
                 result = await self._make_request(
                     mock_request,
                     capture_response=self.config.capture_responses,
                     timeout=request_timeout
                 )
                 latency, tokens, prompt_tokens, completion_tokens, response, error = result
+                
+                self._active_requests -= 1
+                
+                # Record to timeseries
+                if self.timeseries_writer:
+                    self.timeseries_writer.record(
+                        scenario_name=scenario.name,
+                        model_name=self.config.model.name,
+                        model_type=self.config.model.type,
+                        latency=latency if latency else 0,
+                        success=error is None,
+                        tokens=tokens if tokens else 0,
+                        prompt_tokens=prompt_tokens if prompt_tokens else 0,
+                        completion_tokens=completion_tokens if completion_tokens else 0,
+                        error=error,
+                        concurrent_requests=current_concurrent
+                    )
                 
                 self.metrics_collector.add_request_metric(
                     benchmark=benchmark,
@@ -177,6 +219,10 @@ class BenchmarkEngine:
         
         # Finalize metrics
         self.metrics_collector.finalize_benchmark(benchmark, duration)
+        
+        # End timeseries recording
+        if self.timeseries_writer:
+            self.timeseries_writer.end_scenario()
         
         # Print results
         self._print_results(benchmark)
@@ -293,18 +339,19 @@ class BenchmarkEngine:
         return str(filepath)
 
 
-async def run_benchmark(config: BenchmarkConfig, scenarios_only: bool = False) -> List[BenchmarkMetrics]:
+async def run_benchmark(config: BenchmarkConfig, scenarios_only: bool = False, enable_timeseries: bool = True) -> List[BenchmarkMetrics]:
     """
     Main entry point for running benchmarks.
     
     Args:
         config: Benchmark configuration
         scenarios_only: If True, only run configured scenarios. If False, run default if no scenarios.
+        enable_timeseries: If True, record timeseries metrics to file
     
     Returns:
         List of benchmark metrics for each scenario
     """
-    engine = BenchmarkEngine(config)
+    engine = BenchmarkEngine(config, enable_timeseries=enable_timeseries)
     
     print("\n" + "="*60)
     print("🔥 LLM Benchmark Tool")

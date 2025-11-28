@@ -24,6 +24,7 @@ from llm_benchmark.config import (
 )
 from llm_benchmark.engine import BenchmarkEngine, run_benchmark
 from llm_benchmark.exporters import export_results
+from llm_benchmark.html_report import generate_html_report, HTMLReportGenerator
 
 
 def parse_args() -> argparse.Namespace:
@@ -47,6 +48,12 @@ Examples:
   
   # Run and export results
   python benchmark.py --config config.yml --export markdown csv
+  
+  # Generate HTML report from timeseries data
+  python benchmark.py --report results/
+  
+  # Generate report from specific timeseries file
+  python benchmark.py --report results/timeseries_test_gpt-4_20231115_120000.csv
         """
     )
     
@@ -62,6 +69,25 @@ Examples:
         "--init",
         action="store_true",
         help="Generate a default config.yml file"
+    )
+    
+    # Report generation mode
+    parser.add_argument(
+        "--report", "-r",
+        metavar="PATH",
+        help="Generate HTML report from timeseries data (file or directory)"
+    )
+    parser.add_argument(
+        "--report-output",
+        default="reports",
+        help="Output directory for HTML reports (default: reports)"
+    )
+    
+    # Timeseries control
+    parser.add_argument(
+        "--no-timeseries",
+        action="store_true",
+        help="Disable timeseries data recording during benchmark"
     )
     
     # API settings (override config)
@@ -215,6 +241,18 @@ def create_minimal_config(args: argparse.Namespace) -> BenchmarkConfig:
 
 async def main_async(args: argparse.Namespace) -> int:
     """Async main function."""
+    # Handle report generation mode
+    if args.report:
+        try:
+            print("\n📊 Generating HTML Report...")
+            index_path = generate_html_report(args.report, args.report_output)
+            print(f"\n✅ Report generated successfully!")
+            print(f"   Open in browser: {index_path}")
+            return 0
+        except Exception as e:
+            print(f"❌ Error generating report: {e}")
+            return 1
+    
     # Handle init mode
     if args.init:
         config_path = args.config
@@ -264,12 +302,14 @@ async def main_async(args: argparse.Namespace) -> int:
     
     # Run benchmarks
     try:
+        enable_timeseries = not args.no_timeseries
+        
         if args.scenarios:
             # Run all scenarios
             if not config.scenarios:
                 print("⚠️  No scenarios defined in configuration")
                 return 1
-            results = await run_benchmark(config)
+            results = await run_benchmark(config, enable_timeseries=enable_timeseries)
         elif args.scenario:
             # Run specific scenario
             scenario = next(
@@ -281,11 +321,11 @@ async def main_async(args: argparse.Namespace) -> int:
                 print(f"   Available scenarios: {[s.name for s in config.scenarios]}")
                 return 1
             
-            engine = BenchmarkEngine(config)
+            engine = BenchmarkEngine(config, enable_timeseries=enable_timeseries)
             results = [await engine.run_scenario(scenario, quiet=config.quiet)]
         else:
             # Run single benchmark
-            engine = BenchmarkEngine(config)
+            engine = BenchmarkEngine(config, enable_timeseries=enable_timeseries)
             result = await engine.run_single(
                 requests=config.default_requests,
                 concurrency=config.default_concurrency,
@@ -299,6 +339,11 @@ async def main_async(args: argparse.Namespace) -> int:
             exported = export_results(results, config.export_formats, config.output_dir)
             for fmt, path in exported.items():
                 print(f"   {fmt}: {path}")
+        
+        # Show timeseries info
+        if enable_timeseries:
+            print("\n📊 Timeseries data saved to results/ directory")
+            print("   Generate HTML report with: python benchmark.py --report results/")
         
         print("\n✅ Benchmark completed successfully!")
         return 0
