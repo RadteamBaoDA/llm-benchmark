@@ -1,0 +1,23 @@
+# LLM Benchmark Tool - Requirements
+# Python 3.10+ required
+
+# HTTP client with HTTP/2 support
+httpx[http2]>=0.28.0
+
+# YAML configuration
+PyYAML>=6.0.2
+
+# Numerical operations
+numpy>=2.1.3
+
+# Progress bar
+tqdm>=4.67.1
+
+# Async file operations (optional)
+aiofiles>=24.1.0
+
+# Data validation (optional, for future use)
+pydantic>=2.10.2
+
+# Rich console output (optional)
+rich>=13.9.4

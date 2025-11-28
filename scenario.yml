@@ -1,0 +1,59 @@
+# LLM Benchmark Scenarios Configuration
+# Define multiple benchmark scenarios with different load profiles
+
+scenarios:
+  - name: "light_load"
+    description: "Light load test for basic validation"
+    requests: 50
+    concurrency: 5
+    warmup_requests: 2
+    timeout: 60
+    enabled: true
+
+  - name: "medium_load"
+    description: "Medium load test for standard benchmarking"
+    requests: 100
+    concurrency: 10
+    warmup_requests: 3
+    timeout: 60
+    enabled: true
+
+  - name: "heavy_load"
+    description: "Heavy load test for performance limits"
+    requests: 200
+    concurrency: 20
+    warmup_requests: 5
+    timeout: 90
+    enabled: true
+
+  - name: "stress_test"
+    description: "Stress test with high concurrency"
+    requests: 500
+    concurrency: 50
+    warmup_requests: 5
+    timeout: 120
+    enabled: true
+
+  - name: "burst_test"
+    description: "Burst test with maximum concurrency"
+    requests: 100
+    concurrency: 100
+    warmup_requests: 0
+    timeout: 180
+    enabled: false
+
+  - name: "endurance_test"
+    description: "Long-running endurance test"
+    requests: 1000
+    concurrency: 10
+    warmup_requests: 10
+    timeout: 300
+    enabled: false
+
+# Default scenario settings (applied if not specified per scenario)
+defaults:
+  requests: 100
+  concurrency: 10
+  warmup_requests: 1
+  timeout: 60
+  enabled: true
