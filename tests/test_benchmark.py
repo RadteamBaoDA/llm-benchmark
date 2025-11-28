@@ -4,9 +4,14 @@ Tests for LLM Benchmark Tool
 
 import pytest
 import asyncio
+import base64
+import csv
+import json
 from pathlib import Path
 import tempfile
 import os
+from datetime import datetime
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from llm_benchmark.config import (
     BenchmarkConfig,
@@ -14,13 +19,21 @@ from llm_benchmark.config import (
     ModelConfig,
     MockDataConfig,
     ScenarioConfig,
+    ScenarioDefaults,
     load_config,
+    load_scenarios,
     parse_config,
     create_default_config,
-    save_default_config
+    create_default_scenario_config,
+    save_default_config,
+    save_default_scenario_config,
+    init_default_configs
 )
 from llm_benchmark.mock_data import (
     get_mock_generator,
+    load_image_as_base64,
+    MockRequest,
+    BaseMockGenerator,
     ChatMockGenerator,
     EmbedMockGenerator,
     RerankerMockGenerator,
@@ -32,22 +45,178 @@ from llm_benchmark.metrics import (
     RequestMetrics
 )
 from llm_benchmark.exporters import (
+    BaseExporter,
     MarkdownExporter,
     CSVExporter,
     JSONExporter,
+    get_exporter,
     export_results
 )
 
 
-class TestConfig:
-    """Tests for configuration loading."""
+# ============================================================================
+# Config Tests
+# ============================================================================
+
+class TestAPIConfig:
+    """Tests for APIConfig dataclass."""
+    
+    def test_api_config_defaults(self):
+        """Test APIConfig with defaults."""
+        config = APIConfig(base_url="http://localhost:8000")
+        assert config.base_url == "http://localhost:8000"
+        assert config.api_key == ""
+        assert config.timeout == 60
+    
+    def test_api_config_custom_values(self):
+        """Test APIConfig with custom values."""
+        config = APIConfig(
+            base_url="http://api.example.com",
+            api_key="secret-key",
+            timeout=120
+        )
+        assert config.base_url == "http://api.example.com"
+        assert config.api_key == "secret-key"
+        assert config.timeout == 120
+
+
+class TestModelConfig:
+    """Tests for ModelConfig dataclass."""
+    
+    def test_model_config_defaults(self):
+        """Test ModelConfig with defaults."""
+        config = ModelConfig(name="gpt-4", type="chat")
+        assert config.name == "gpt-4"
+        assert config.type == "chat"
+        assert config.max_tokens == 32
+        assert config.temperature == 0.2
+    
+    def test_model_config_custom_values(self):
+        """Test ModelConfig with custom values."""
+        config = ModelConfig(
+            name="text-embedding-3-large",
+            type="embed",
+            max_tokens=100,
+            temperature=0.0
+        )
+        assert config.name == "text-embedding-3-large"
+        assert config.type == "embed"
+        assert config.max_tokens == 100
+        assert config.temperature == 0.0
+
+
+class TestMockDataConfig:
+    """Tests for MockDataConfig dataclass."""
+    
+    def test_mock_data_config_defaults(self):
+        """Test MockDataConfig defaults."""
+        config = MockDataConfig()
+        assert len(config.chat_prompts) == 5
+        assert len(config.embed_texts) == 5
+        assert config.reranker_query == "What is machine learning?"
+        assert len(config.reranker_documents) == 5
+        assert len(config.vision_prompts) == 3
+        assert config.vision_image_url is not None
+        assert config.vision_image_base64 is None
+        assert config.vision_image_path is None
+        assert config.vision_image_paths == []
+    
+    def test_mock_data_config_custom_prompts(self):
+        """Test MockDataConfig with custom prompts."""
+        config = MockDataConfig(
+            chat_prompts=["Test prompt 1", "Test prompt 2"],
+            embed_texts=["Test text"]
+        )
+        assert len(config.chat_prompts) == 2
+        assert len(config.embed_texts) == 1
+
+
+class TestScenarioConfig:
+    """Tests for ScenarioConfig dataclass."""
+    
+    def test_scenario_config_required_fields(self):
+        """Test ScenarioConfig with required fields."""
+        config = ScenarioConfig(name="test", requests=100, concurrency=10)
+        assert config.name == "test"
+        assert config.requests == 100
+        assert config.concurrency == 10
+        assert config.description == ""
+        assert config.warmup_requests == 1
+        assert config.timeout == 60
+        assert config.enabled is True
+    
+    def test_scenario_config_all_fields(self):
+        """Test ScenarioConfig with all fields."""
+        config = ScenarioConfig(
+            name="stress_test",
+            requests=500,
+            concurrency=50,
+            description="High load test",
+            warmup_requests=5,
+            timeout=120,
+            enabled=False
+        )
+        assert config.name == "stress_test"
+        assert config.requests == 500
+        assert config.concurrency == 50
+        assert config.description == "High load test"
+        assert config.warmup_requests == 5
+        assert config.timeout == 120
+        assert config.enabled is False
+
+
+class TestScenarioDefaults:
+    """Tests for ScenarioDefaults dataclass."""
+    
+    def test_scenario_defaults(self):
+        """Test ScenarioDefaults default values."""
+        defaults = ScenarioDefaults()
+        assert defaults.requests == 100
+        assert defaults.concurrency == 10
+        assert defaults.warmup_requests == 1
+        assert defaults.timeout == 60
+        assert defaults.enabled is True
+
+
+class TestBenchmarkConfig:
+    """Tests for BenchmarkConfig dataclass."""
+    
+    def test_benchmark_config_required_fields(self):
+        """Test BenchmarkConfig with required fields."""
+        config = BenchmarkConfig(
+            api=APIConfig(base_url="http://localhost:8000"),
+            model=ModelConfig(name="gpt-4", type="chat")
+        )
+        assert config.api.base_url == "http://localhost:8000"
+        assert config.model.name == "gpt-4"
+        assert config.scenarios == []
+        assert config.default_requests == 100
+        assert config.default_concurrency == 10
+        assert config.capture_responses is False
+        assert config.output_dir == "results"
+        assert config.export_formats == ["markdown", "csv"]
+        assert config.quiet is False
+
+
+class TestConfigFunctions:
+    """Tests for config loading and saving functions."""
     
     def test_create_default_config(self):
         """Test default config creation."""
         config_str = create_default_config()
         assert "api:" in config_str
         assert "model:" in config_str
+        assert "scenario_file:" in config_str
+        assert "benchmark:" in config_str
+        assert "mock_data:" in config_str
+    
+    def test_create_default_scenario_config(self):
+        """Test default scenario config creation."""
+        config_str = create_default_scenario_config()
         assert "scenarios:" in config_str
+        assert "defaults:" in config_str
+        assert "light_load" in config_str
+        assert "warmup_requests:" in config_str
     
     def test_save_and_load_config(self):
         """Test saving and loading config."""
@@ -60,6 +229,44 @@ class TestConfig:
             config = load_config(str(config_path))
             assert config.api.base_url == "http://localhost:8000"
             assert config.model.type == "chat"
+    
+    def test_save_default_scenario_config(self):
+        """Test saving scenario config."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scenario_path = Path(tmpdir) / "scenario.yml"
+            save_default_scenario_config(str(scenario_path))
+            
+            assert scenario_path.exists()
+            content = scenario_path.read_text()
+            assert "scenarios:" in content
+    
+    def test_init_default_configs(self):
+        """Test initializing both config files."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = str(Path(tmpdir) / "config.yml")
+            scenario_path = str(Path(tmpdir) / "scenario.yml")
+            init_default_configs(config_path, scenario_path)
+            
+            assert Path(config_path).exists()
+            assert Path(scenario_path).exists()
+    
+    def test_load_scenarios(self):
+        """Test loading scenarios from file."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scenario_path = Path(tmpdir) / "scenario.yml"
+            save_default_scenario_config(str(scenario_path))
+            
+            defaults = ScenarioDefaults()
+            scenarios = load_scenarios(scenario_path, defaults)
+            
+            assert len(scenarios) > 0
+            assert any(s.name == "light_load" for s in scenarios)
+    
+    def test_load_scenarios_nonexistent_file(self):
+        """Test loading scenarios from nonexistent file."""
+        defaults = ScenarioDefaults()
+        scenarios = load_scenarios(Path("/nonexistent/path.yml"), defaults)
+        assert scenarios == []
     
     def test_parse_config(self):
         """Test config parsing."""
@@ -88,12 +295,266 @@ class TestConfig:
         assert config.api.api_key == "test-key"
         assert config.model.name == "test-model"
         assert config.model.type == "embed"
-        assert len(config.scenarios) == 1
         assert config.capture_responses is True
+    
+    def test_parse_config_with_vision_paths(self):
+        """Test config parsing with vision image paths."""
+        raw_config = {
+            "api": {"base_url": "http://localhost:8000"},
+            "model": {"name": "gpt-4-vision", "type": "vision"},
+            "mock_data": {
+                "vision_image_path": "/path/to/image.jpg",
+                "vision_image_paths": ["/path/1.jpg", "/path/2.png"]
+            }
+        }
+        
+        config = parse_config(raw_config)
+        assert config.mock_data.vision_image_path == "/path/to/image.jpg"
+        assert len(config.mock_data.vision_image_paths) == 2
+    
+    def test_load_config_file_not_found(self):
+        """Test loading nonexistent config file."""
+        with pytest.raises(FileNotFoundError):
+            load_config("/nonexistent/config.yml")
 
 
-class TestMockData:
-    """Tests for mock data generators."""
+# ============================================================================
+# Mock Data Tests
+# ============================================================================
+
+class TestMockRequest:
+    """Tests for MockRequest dataclass."""
+    
+    def test_mock_request(self):
+        """Test MockRequest creation."""
+        request = MockRequest(
+            payload={"model": "test"},
+            endpoint="/v1/chat/completions",
+            description="Test request"
+        )
+        assert request.payload == {"model": "test"}
+        assert request.endpoint == "/v1/chat/completions"
+        assert request.description == "Test request"
+
+
+class TestLoadImageAsBase64:
+    """Tests for load_image_as_base64 function."""
+    
+    def test_load_image_as_base64_jpeg(self):
+        """Test loading JPEG image."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create a minimal JPEG-like file
+            image_path = Path(tmpdir) / "test.jpg"
+            image_data = b'\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00'
+            image_path.write_bytes(image_data)
+            
+            base64_data, mime_type = load_image_as_base64(str(image_path))
+            
+            assert base64_data == base64.b64encode(image_data).decode("utf-8")
+            assert mime_type == "image/jpeg"
+    
+    def test_load_image_as_base64_png(self):
+        """Test loading PNG image."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            image_path = Path(tmpdir) / "test.png"
+            image_data = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR'
+            image_path.write_bytes(image_data)
+            
+            base64_data, mime_type = load_image_as_base64(str(image_path))
+            
+            assert base64_data == base64.b64encode(image_data).decode("utf-8")
+            assert mime_type == "image/png"
+    
+    def test_load_image_as_base64_file_not_found(self):
+        """Test loading nonexistent image."""
+        with pytest.raises(FileNotFoundError):
+            load_image_as_base64("/nonexistent/image.jpg")
+
+
+class TestChatMockGenerator:
+    """Tests for ChatMockGenerator."""
+    
+    def test_get_endpoint(self):
+        """Test endpoint."""
+        model_config = ModelConfig(name="test", type="chat")
+        mock_config = MockDataConfig()
+        generator = ChatMockGenerator(model_config, mock_config)
+        
+        assert generator.get_endpoint() == "/v1/chat/completions"
+    
+    def test_generate_single(self):
+        """Test generating single request."""
+        model_config = ModelConfig(name="gpt-4", type="chat", max_tokens=50)
+        mock_config = MockDataConfig(chat_prompts=["Hello!"])
+        generator = ChatMockGenerator(model_config, mock_config)
+        
+        requests = generator.generate(1)
+        
+        assert len(requests) == 1
+        assert requests[0].payload["model"] == "gpt-4"
+        assert requests[0].payload["max_tokens"] == 50
+        assert requests[0].payload["messages"][0]["content"] == "Hello!"
+    
+    def test_generate_multiple(self):
+        """Test generating multiple requests."""
+        model_config = ModelConfig(name="test", type="chat")
+        mock_config = MockDataConfig()
+        generator = ChatMockGenerator(model_config, mock_config)
+        
+        requests = generator.generate(10)
+        
+        assert len(requests) == 10
+        for req in requests:
+            assert req.endpoint == "/v1/chat/completions"
+            assert "messages" in req.payload
+            assert req.payload["stream"] is False
+
+
+class TestEmbedMockGenerator:
+    """Tests for EmbedMockGenerator."""
+    
+    def test_get_endpoint(self):
+        """Test endpoint."""
+        model_config = ModelConfig(name="test", type="embed")
+        mock_config = MockDataConfig()
+        generator = EmbedMockGenerator(model_config, mock_config)
+        
+        assert generator.get_endpoint() == "/v1/embeddings"
+    
+    def test_generate(self):
+        """Test generating embedding requests."""
+        model_config = ModelConfig(name="text-embedding-3-small", type="embed")
+        mock_config = MockDataConfig(embed_texts=["Test text"])
+        generator = EmbedMockGenerator(model_config, mock_config)
+        
+        requests = generator.generate(3)
+        
+        assert len(requests) == 3
+        for req in requests:
+            assert req.endpoint == "/v1/embeddings"
+            assert req.payload["model"] == "text-embedding-3-small"
+            assert req.payload["input"] == "Test text"
+            assert req.payload["encoding_format"] == "float"
+
+
+class TestRerankerMockGenerator:
+    """Tests for RerankerMockGenerator."""
+    
+    def test_get_endpoint(self):
+        """Test endpoint."""
+        model_config = ModelConfig(name="test", type="reranker")
+        mock_config = MockDataConfig()
+        generator = RerankerMockGenerator(model_config, mock_config)
+        
+        assert generator.get_endpoint() == "/v1/rerank"
+    
+    def test_generate(self):
+        """Test generating reranker requests."""
+        model_config = ModelConfig(name="rerank-model", type="reranker")
+        mock_config = MockDataConfig(
+            reranker_query="test query",
+            reranker_documents=["doc1", "doc2", "doc3"]
+        )
+        generator = RerankerMockGenerator(model_config, mock_config)
+        
+        requests = generator.generate(2)
+        
+        assert len(requests) == 2
+        for req in requests:
+            assert req.endpoint == "/v1/rerank"
+            assert req.payload["query"] == "test query"
+            assert len(req.payload["documents"]) == 3
+            assert req.payload["top_n"] == 3
+
+
+class TestVisionMockGenerator:
+    """Tests for VisionMockGenerator."""
+    
+    def test_get_endpoint(self):
+        """Test endpoint."""
+        model_config = ModelConfig(name="test", type="vision")
+        mock_config = MockDataConfig()
+        generator = VisionMockGenerator(model_config, mock_config)
+        
+        assert generator.get_endpoint() == "/v1/chat/completions"
+    
+    def test_generate_with_url(self):
+        """Test generating with image URL."""
+        model_config = ModelConfig(name="gpt-4-vision", type="vision")
+        mock_config = MockDataConfig(
+            vision_prompts=["Describe this"],
+            vision_image_url="http://example.com/image.jpg"
+        )
+        generator = VisionMockGenerator(model_config, mock_config)
+        
+        requests = generator.generate(1)
+        
+        assert len(requests) == 1
+        content = requests[0].payload["messages"][0]["content"]
+        assert len(content) == 2
+        assert content[0]["type"] == "text"
+        assert content[1]["type"] == "image_url"
+        assert content[1]["image_url"]["url"] == "http://example.com/image.jpg"
+    
+    def test_generate_with_base64(self):
+        """Test generating with base64 image."""
+        model_config = ModelConfig(name="gpt-4-vision", type="vision")
+        mock_config = MockDataConfig(
+            vision_prompts=["Describe this"],
+            vision_image_base64="dGVzdA=="
+        )
+        generator = VisionMockGenerator(model_config, mock_config)
+        
+        requests = generator.generate(1)
+        
+        content = requests[0].payload["messages"][0]["content"]
+        assert "data:image/jpeg;base64,dGVzdA==" in content[1]["image_url"]["url"]
+    
+    def test_generate_with_local_path(self):
+        """Test generating with local image path."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            image_path = Path(tmpdir) / "test.jpg"
+            image_path.write_bytes(b"fake image data")
+            
+            model_config = ModelConfig(name="gpt-4-vision", type="vision")
+            mock_config = MockDataConfig(
+                vision_prompts=["Describe this"],
+                vision_image_path=str(image_path)
+            )
+            generator = VisionMockGenerator(model_config, mock_config)
+            
+            requests = generator.generate(1)
+            
+            content = requests[0].payload["messages"][0]["content"]
+            assert content[1]["image_url"]["url"].startswith("data:image/jpeg;base64,")
+    
+    def test_generate_with_multiple_paths(self):
+        """Test generating with multiple local image paths."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            paths = []
+            for i in range(3):
+                image_path = Path(tmpdir) / f"test{i}.jpg"
+                image_path.write_bytes(f"fake image data {i}".encode())
+                paths.append(str(image_path))
+            
+            model_config = ModelConfig(name="gpt-4-vision", type="vision")
+            mock_config = MockDataConfig(
+                vision_prompts=["Describe this"],
+                vision_image_paths=paths
+            )
+            generator = VisionMockGenerator(model_config, mock_config)
+            
+            requests = generator.generate(5)
+            
+            assert len(requests) == 5
+            # Check that images cycle through
+            for i, req in enumerate(requests):
+                content = req.payload["messages"][0]["content"]
+                assert content[1]["type"] == "image_url"
+
+
+class TestGetMockGenerator:
+    """Tests for get_mock_generator factory function."""
     
     def test_get_chat_generator(self):
         """Test getting chat generator."""
@@ -111,64 +572,102 @@ class TestMockData:
         generator = get_mock_generator(model_config, mock_config)
         assert isinstance(generator, EmbedMockGenerator)
     
-    def test_chat_generator_generate(self):
-        """Test chat generator produces valid requests."""
-        model_config = ModelConfig(name="test-model", type="chat", max_tokens=32)
+    def test_get_embedding_generator(self):
+        """Test getting embedding generator (alias)."""
+        model_config = ModelConfig(name="test", type="embedding")
         mock_config = MockDataConfig()
         
-        generator = ChatMockGenerator(model_config, mock_config)
-        requests = generator.generate(5)
-        
-        assert len(requests) == 5
-        for req in requests:
-            assert req.endpoint == "/v1/chat/completions"
-            assert req.payload["model"] == "test-model"
-            assert "messages" in req.payload
+        generator = get_mock_generator(model_config, mock_config)
+        assert isinstance(generator, EmbedMockGenerator)
     
-    def test_embed_generator_generate(self):
-        """Test embed generator produces valid requests."""
-        model_config = ModelConfig(name="embed-model", type="embed")
+    def test_get_reranker_generator(self):
+        """Test getting reranker generator."""
+        model_config = ModelConfig(name="test", type="reranker")
         mock_config = MockDataConfig()
         
-        generator = EmbedMockGenerator(model_config, mock_config)
-        requests = generator.generate(3)
-        
-        assert len(requests) == 3
-        for req in requests:
-            assert req.endpoint == "/v1/embeddings"
-            assert req.payload["model"] == "embed-model"
-            assert "input" in req.payload
+        generator = get_mock_generator(model_config, mock_config)
+        assert isinstance(generator, RerankerMockGenerator)
     
-    def test_reranker_generator_generate(self):
-        """Test reranker generator produces valid requests."""
-        model_config = ModelConfig(name="rerank-model", type="reranker")
+    def test_get_rerank_generator(self):
+        """Test getting rerank generator (alias)."""
+        model_config = ModelConfig(name="test", type="rerank")
         mock_config = MockDataConfig()
         
-        generator = RerankerMockGenerator(model_config, mock_config)
-        requests = generator.generate(2)
-        
-        assert len(requests) == 2
-        for req in requests:
-            assert req.endpoint == "/v1/rerank"
-            assert "query" in req.payload
-            assert "documents" in req.payload
+        generator = get_mock_generator(model_config, mock_config)
+        assert isinstance(generator, RerankerMockGenerator)
     
-    def test_vision_generator_generate(self):
-        """Test vision generator produces valid requests."""
-        model_config = ModelConfig(name="vision-model", type="vision")
+    def test_get_vision_generator(self):
+        """Test getting vision generator."""
+        model_config = ModelConfig(name="test", type="vision")
         mock_config = MockDataConfig()
         
-        generator = VisionMockGenerator(model_config, mock_config)
-        requests = generator.generate(2)
+        generator = get_mock_generator(model_config, mock_config)
+        assert isinstance(generator, VisionMockGenerator)
+    
+    def test_get_unknown_generator(self):
+        """Test getting unknown generator type."""
+        model_config = ModelConfig(name="test", type="unknown")
+        mock_config = MockDataConfig()
         
-        assert len(requests) == 2
-        for req in requests:
-            assert req.endpoint == "/v1/chat/completions"
-            assert "messages" in req.payload
+        with pytest.raises(ValueError, match="Unknown model type"):
+            get_mock_generator(model_config, mock_config)
 
 
-class TestMetrics:
-    """Tests for metrics collection."""
+# ============================================================================
+# Metrics Tests
+# ============================================================================
+
+class TestRequestMetrics:
+    """Tests for RequestMetrics dataclass."""
+    
+    def test_request_metrics_defaults(self):
+        """Test RequestMetrics with defaults."""
+        metrics = RequestMetrics(latency=0.5)
+        assert metrics.latency == 0.5
+        assert metrics.tokens == 0
+        assert metrics.prompt_tokens == 0
+        assert metrics.completion_tokens == 0
+        assert metrics.success is True
+        assert metrics.error is None
+        assert metrics.response is None
+    
+    def test_request_metrics_all_fields(self):
+        """Test RequestMetrics with all fields."""
+        response = {"choices": []}
+        metrics = RequestMetrics(
+            latency=0.5,
+            tokens=100,
+            prompt_tokens=30,
+            completion_tokens=70,
+            success=False,
+            error="Timeout",
+            response=response
+        )
+        assert metrics.latency == 0.5
+        assert metrics.tokens == 100
+        assert metrics.prompt_tokens == 30
+        assert metrics.completion_tokens == 70
+        assert metrics.success is False
+        assert metrics.error == "Timeout"
+        assert metrics.response == response
+
+
+class TestBenchmarkMetrics:
+    """Tests for BenchmarkMetrics dataclass."""
+    
+    def test_benchmark_metrics_defaults(self):
+        """Test BenchmarkMetrics with defaults."""
+        metrics = BenchmarkMetrics(
+            model_name="test",
+            model_type="chat",
+            scenario_name="default",
+            total_requests=100,
+            concurrency=10
+        )
+        assert metrics.model_name == "test"
+        assert metrics.successful_requests == 0
+        assert metrics.failed_requests == 0
+        assert metrics.duration == 0.0
     
     def test_benchmark_metrics_calculate(self):
         """Test metrics calculation."""
@@ -180,7 +679,6 @@ class TestMetrics:
             concurrency=2
         )
         
-        # Add request metrics
         metrics.request_metrics = [
             RequestMetrics(latency=0.1, tokens=10, prompt_tokens=3, completion_tokens=7),
             RequestMetrics(latency=0.2, tokens=15, prompt_tokens=5, completion_tokens=10),
@@ -195,34 +693,52 @@ class TestMetrics:
         assert metrics.successful_requests == 5
         assert metrics.failed_requests == 0
         assert metrics.total_tokens == 75
+        assert metrics.total_prompt_tokens == 26
+        assert metrics.total_completion_tokens == 49
         assert metrics.requests_per_sec == 5.0
+        assert metrics.tokens_per_sec == 75.0
         assert metrics.avg_latency == 0.2
+        assert metrics.avg_tokens_per_request == 15.0
     
-    def test_metrics_collector(self):
-        """Test metrics collector."""
-        collector = MetricsCollector()
-        
-        benchmark = collector.create_benchmark(
+    def test_benchmark_metrics_calculate_with_failures(self):
+        """Test metrics calculation with failed requests."""
+        metrics = BenchmarkMetrics(
             model_name="test",
             model_type="chat",
             scenario_name="test",
-            total_requests=10,
-            concurrency=5
+            total_requests=3,
+            concurrency=2
         )
         
-        collector.add_request_metric(
-            benchmark,
-            latency=0.1,
-            tokens=10,
-            success=True
-        )
+        metrics.request_metrics = [
+            RequestMetrics(latency=0.1, tokens=10, success=True),
+            RequestMetrics(latency=0.2, tokens=0, success=False, error="Error"),
+            RequestMetrics(latency=0.15, tokens=15, success=True),
+        ]
+        metrics.duration = 0.5
         
-        collector.finalize_benchmark(benchmark, duration=0.5)
+        metrics.calculate()
         
-        assert len(collector.benchmarks) == 1
-        assert benchmark.successful_requests == 1
+        assert metrics.successful_requests == 2
+        assert metrics.failed_requests == 1
+        assert metrics.total_tokens == 25
     
-    def test_metrics_to_dict(self):
+    def test_benchmark_metrics_calculate_empty(self):
+        """Test metrics calculation with no requests."""
+        metrics = BenchmarkMetrics(
+            model_name="test",
+            model_type="chat",
+            scenario_name="test",
+            total_requests=0,
+            concurrency=1
+        )
+        
+        metrics.calculate()
+        
+        assert metrics.successful_requests == 0
+        assert metrics.failed_requests == 0
+    
+    def test_benchmark_metrics_to_dict(self):
         """Test metrics serialization."""
         metrics = BenchmarkMetrics(
             model_name="test",
@@ -239,19 +755,163 @@ class TestMetrics:
         
         data = metrics.to_dict()
         
-        assert "model_name" in data
+        assert data["model_name"] == "test"
+        assert data["model_type"] == "chat"
+        assert data["scenario_name"] == "test"
+        assert "configuration" in data
         assert "results" in data
         assert "latency" in data
-
-
-class TestExporters:
-    """Tests for result exporters."""
+        assert "tokens" in data
     
-    def test_markdown_exporter(self):
+    def test_benchmark_metrics_latency_percentiles(self):
+        """Test latency percentile calculations."""
+        metrics = BenchmarkMetrics(
+            model_name="test",
+            model_type="chat",
+            scenario_name="test",
+            total_requests=100,
+            concurrency=10
+        )
+        
+        # Create 100 requests with latencies 0.01 to 1.0
+        metrics.request_metrics = [
+            RequestMetrics(latency=i/100, tokens=10)
+            for i in range(1, 101)
+        ]
+        metrics.duration = 1.0
+        
+        metrics.calculate()
+        
+        assert metrics.min_latency == 0.01
+        assert metrics.max_latency == 1.0
+        assert 0.49 <= metrics.p50_latency <= 0.51
+        assert 0.94 <= metrics.p95_latency <= 0.96
+        assert 0.98 <= metrics.p99_latency <= 1.0
+
+
+class TestMetricsCollector:
+    """Tests for MetricsCollector."""
+    
+    def test_create_benchmark(self):
+        """Test creating benchmark."""
+        collector = MetricsCollector()
+        
+        benchmark = collector.create_benchmark(
+            model_name="test",
+            model_type="chat",
+            scenario_name="test",
+            total_requests=100,
+            concurrency=10
+        )
+        
+        assert benchmark.model_name == "test"
+        assert benchmark.total_requests == 100
+        assert len(collector.benchmarks) == 1
+    
+    def test_add_request_metric(self):
+        """Test adding request metric."""
+        collector = MetricsCollector()
+        
+        benchmark = collector.create_benchmark(
+            model_name="test",
+            model_type="chat",
+            scenario_name="test",
+            total_requests=10,
+            concurrency=5
+        )
+        
+        collector.add_request_metric(
+            benchmark,
+            latency=0.1,
+            tokens=10,
+            prompt_tokens=3,
+            completion_tokens=7,
+            success=True
+        )
+        
+        assert len(benchmark.request_metrics) == 1
+        assert benchmark.request_metrics[0].latency == 0.1
+        assert benchmark.request_metrics[0].tokens == 10
+    
+    def test_finalize_benchmark(self):
+        """Test finalizing benchmark."""
+        collector = MetricsCollector()
+        
+        benchmark = collector.create_benchmark(
+            model_name="test",
+            model_type="chat",
+            scenario_name="test",
+            total_requests=2,
+            concurrency=1
+        )
+        
+        collector.add_request_metric(benchmark, latency=0.1, tokens=10, success=True)
+        collector.add_request_metric(benchmark, latency=0.2, tokens=20, success=True)
+        
+        collector.finalize_benchmark(benchmark, duration=0.5)
+        
+        assert benchmark.duration == 0.5
+        assert benchmark.end_time is not None
+        assert benchmark.successful_requests == 2
+    
+    def test_get_summary(self):
+        """Test getting summary."""
+        collector = MetricsCollector()
+        
+        benchmark = collector.create_benchmark(
+            model_name="test",
+            model_type="chat",
+            scenario_name="test",
+            total_requests=1,
+            concurrency=1
+        )
+        collector.add_request_metric(benchmark, latency=0.1, tokens=10, success=True)
+        collector.finalize_benchmark(benchmark, duration=0.1)
+        
+        summary = collector.get_summary()
+        
+        assert summary["total_benchmarks"] == 1
+        assert len(summary["benchmarks"]) == 1
+
+
+# ============================================================================
+# Exporter Tests
+# ============================================================================
+
+class TestBaseExporter:
+    """Tests for BaseExporter."""
+    
+    def test_generate_filename(self):
+        """Test filename generation."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            exporter = MarkdownExporter(tmpdir)
+            filename = exporter.generate_filename("test")
+            
+            assert filename.startswith("test_")
+            assert filename.endswith(".md")
+    
+    def test_output_dir_creation(self):
+        """Test output directory creation."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "nested" / "output"
+            exporter = MarkdownExporter(str(output_dir))
+            
+            assert output_dir.exists()
+
+
+class TestMarkdownExporter:
+    """Tests for MarkdownExporter."""
+    
+    def test_get_extension(self):
+        """Test extension."""
+        exporter = MarkdownExporter(".")
+        assert exporter.get_extension() == "md"
+    
+    def test_export(self):
         """Test Markdown export."""
         with tempfile.TemporaryDirectory() as tmpdir:
             metrics = BenchmarkMetrics(
-                model_name="test",
+                model_name="gpt-4",
                 model_type="chat",
                 scenario_name="test",
                 total_requests=10,
@@ -267,10 +927,55 @@ class TestExporters:
             filepath = exporter.export([metrics])
             
             assert Path(filepath).exists()
-            content = Path(filepath).read_text()
+            content = Path(filepath).read_text(encoding='utf-8')
             assert "# LLM Benchmark Results" in content
+            assert "gpt-4" in content
+            assert "test" in content
     
-    def test_csv_exporter(self):
+    def test_export_multiple_metrics(self):
+        """Test exporting multiple benchmark results."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            metrics1 = BenchmarkMetrics(
+                model_name="model1",
+                model_type="chat",
+                scenario_name="scenario1",
+                total_requests=10,
+                concurrency=5
+            )
+            metrics1.request_metrics = [RequestMetrics(latency=0.1, tokens=10)]
+            metrics1.duration = 0.5
+            metrics1.calculate()
+            
+            metrics2 = BenchmarkMetrics(
+                model_name="model2",
+                model_type="embed",
+                scenario_name="scenario2",
+                total_requests=20,
+                concurrency=10
+            )
+            metrics2.request_metrics = [RequestMetrics(latency=0.2, tokens=20)]
+            metrics2.duration = 1.0
+            metrics2.calculate()
+            
+            exporter = MarkdownExporter(tmpdir)
+            filepath = exporter.export([metrics1, metrics2])
+            
+            content = Path(filepath).read_text(encoding='utf-8')
+            assert "model1" in content
+            assert "model2" in content
+            assert "scenario1" in content
+            assert "scenario2" in content
+
+
+class TestCSVExporter:
+    """Tests for CSVExporter."""
+    
+    def test_get_extension(self):
+        """Test extension."""
+        exporter = CSVExporter(".")
+        assert exporter.get_extension() == "csv"
+    
+    def test_export(self):
         """Test CSV export."""
         with tempfile.TemporaryDirectory() as tmpdir:
             metrics = BenchmarkMetrics(
@@ -290,6 +995,87 @@ class TestExporters:
             filepath = exporter.export([metrics])
             
             assert Path(filepath).exists()
+            
+            # Verify CSV content
+            with open(filepath, 'r') as f:
+                reader = csv.reader(f)
+                headers = next(reader)
+                row = next(reader)
+                
+                assert "scenario_name" in headers
+                assert "model_name" in headers
+                assert "test" in row
+
+
+class TestJSONExporter:
+    """Tests for JSONExporter."""
+    
+    def test_get_extension(self):
+        """Test extension."""
+        exporter = JSONExporter(".")
+        assert exporter.get_extension() == "json"
+    
+    def test_export(self):
+        """Test JSON export."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            metrics = BenchmarkMetrics(
+                model_name="test",
+                model_type="chat",
+                scenario_name="test",
+                total_requests=10,
+                concurrency=5
+            )
+            metrics.request_metrics = [
+                RequestMetrics(latency=0.1, tokens=10)
+            ]
+            metrics.duration = 0.5
+            metrics.calculate()
+            
+            exporter = JSONExporter(tmpdir)
+            filepath = exporter.export([metrics])
+            
+            assert Path(filepath).exists()
+            
+            # Verify JSON content
+            with open(filepath, 'r') as f:
+                data = json.load(f)
+                
+                assert "generated_at" in data
+                assert "benchmarks" in data
+                assert len(data["benchmarks"]) == 1
+
+
+class TestGetExporter:
+    """Tests for get_exporter factory function."""
+    
+    def test_get_markdown_exporter(self):
+        """Test getting markdown exporter."""
+        exporter = get_exporter("markdown", ".")
+        assert isinstance(exporter, MarkdownExporter)
+    
+    def test_get_md_exporter(self):
+        """Test getting md exporter (alias)."""
+        exporter = get_exporter("md", ".")
+        assert isinstance(exporter, MarkdownExporter)
+    
+    def test_get_csv_exporter(self):
+        """Test getting CSV exporter."""
+        exporter = get_exporter("csv", ".")
+        assert isinstance(exporter, CSVExporter)
+    
+    def test_get_json_exporter(self):
+        """Test getting JSON exporter."""
+        exporter = get_exporter("json", ".")
+        assert isinstance(exporter, JSONExporter)
+    
+    def test_get_unknown_exporter(self):
+        """Test getting unknown exporter type."""
+        with pytest.raises(ValueError, match="Unknown export format"):
+            get_exporter("unknown", ".")
+
+
+class TestExportResults:
+    """Tests for export_results function."""
     
     def test_export_results_multiple_formats(self):
         """Test exporting to multiple formats."""
@@ -310,6 +1096,10 @@ class TestExporters:
             results = export_results([metrics], ["markdown", "csv", "json"], tmpdir)
             
             assert len(results) == 3
+            assert "markdown" in results
+            assert "csv" in results
+            assert "json" in results
+            
             for path in results.values():
                 assert Path(path).exists()
 
