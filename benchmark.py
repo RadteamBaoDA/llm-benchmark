@@ -173,6 +173,18 @@ Examples:
         help="Verbose output"
     )
     
+    # Debug settings
+    parser.add_argument(
+        "--debug", "-d",
+        action="store_true",
+        help="Enable detailed debug logging for execution modes (outputs to debug.log)"
+    )
+    parser.add_argument(
+        "--debug-console",
+        action="store_true",
+        help="Also print debug output to console (requires --debug)"
+    )
+    
     return parser.parse_args()
 
 
@@ -303,13 +315,26 @@ async def main_async(args: argparse.Namespace) -> int:
     # Run benchmarks
     try:
         enable_timeseries = not args.no_timeseries
+        debug_enabled = args.debug
+        debug_console = args.debug_console
+        
+        # Handle debug console option
+        if debug_console and not debug_enabled:
+            print("⚠️  --debug-console requires --debug flag, enabling debug mode")
+            debug_enabled = True
+        
+        if debug_enabled:
+            print("🔍 Debug mode enabled - logging to debug.log")
+            if debug_console:
+                print("   Debug output also printing to console")
         
         if args.scenarios:
             # Run all scenarios
             if not config.scenarios:
                 print("⚠️  No scenarios defined in configuration")
                 return 1
-            results = await run_benchmark(config, enable_timeseries=enable_timeseries)
+            results = await run_benchmark(config, enable_timeseries=enable_timeseries, 
+                                         debug=debug_enabled, debug_console=debug_console)
         elif args.scenario:
             # Run specific scenario
             scenario = next(
@@ -321,11 +346,13 @@ async def main_async(args: argparse.Namespace) -> int:
                 print(f"   Available scenarios: {[s.name for s in config.scenarios]}")
                 return 1
             
-            engine = BenchmarkEngine(config, enable_timeseries=enable_timeseries)
+            engine = BenchmarkEngine(config, enable_timeseries=enable_timeseries, 
+                                     debug=debug_enabled, debug_console=debug_console)
             results = [await engine.run_scenario(scenario, quiet=config.quiet)]
         else:
             # Run single benchmark
-            engine = BenchmarkEngine(config, enable_timeseries=enable_timeseries)
+            engine = BenchmarkEngine(config, enable_timeseries=enable_timeseries, 
+                                     debug=debug_enabled, debug_console=debug_console)
             result = await engine.run_single(
                 requests=config.default_requests,
                 concurrency=config.default_concurrency,
@@ -344,6 +371,10 @@ async def main_async(args: argparse.Namespace) -> int:
         if enable_timeseries:
             print("\n📊 Timeseries data saved to results/ directory")
             print("   Generate HTML report with: python benchmark.py --report results/")
+        
+        # Show debug info
+        if debug_enabled:
+            print("\n🔍 Debug log saved to: debug.log")
         
         print("\n✅ Benchmark completed successfully!")
         return 0

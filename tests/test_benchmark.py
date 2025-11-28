@@ -144,6 +144,7 @@ class TestScenarioConfig:
         assert config.warmup_requests == 1
         assert config.timeout == 60
         assert config.enabled is True
+        assert config.mode == "parallel"
     
     def test_scenario_config_all_fields(self):
         """Test ScenarioConfig with all fields."""
@@ -154,7 +155,8 @@ class TestScenarioConfig:
             description="High load test",
             warmup_requests=5,
             timeout=120,
-            enabled=False
+            enabled=False,
+            mode="queue_test"
         )
         assert config.name == "stress_test"
         assert config.requests == 500
@@ -163,6 +165,7 @@ class TestScenarioConfig:
         assert config.warmup_requests == 5
         assert config.timeout == 120
         assert config.enabled is False
+        assert config.mode == "queue_test"
 
 
 class TestScenarioDefaults:
@@ -173,6 +176,7 @@ class TestScenarioDefaults:
         defaults = ScenarioDefaults()
         assert defaults.requests == 100
         assert defaults.concurrency == 10
+        assert defaults.mode == "parallel"
         assert defaults.warmup_requests == 1
         assert defaults.timeout == 60
         assert defaults.enabled is True
@@ -1487,6 +1491,767 @@ class TestGenerateHTMLReport:
             
             index_path = generate_html_report(tmpdir, str(report_dir))
             assert Path(index_path).exists()
+
+
+# ============================================================================
+# Engine JMeter-Style Mode Tests
+# ============================================================================
+
+from llm_benchmark.engine import BenchmarkMode, LoadProfile, QueueMetrics
+
+
+class TestBenchmarkMode:
+    """Tests for BenchmarkMode enum."""
+    
+    def test_basic_modes(self):
+        """Test basic execution modes."""
+        assert BenchmarkMode.PARALLEL.value == "parallel"
+        assert BenchmarkMode.CONTROLLED.value == "controlled"
+        assert BenchmarkMode.QUEUE_TEST.value == "queue_test"
+    
+    def test_jmeter_modes(self):
+        """Test JMeter-style execution modes."""
+        assert BenchmarkMode.RAMP_UP.value == "ramp_up"
+        assert BenchmarkMode.STEPPING.value == "stepping"
+        assert BenchmarkMode.SPIKE.value == "spike"
+        assert BenchmarkMode.CONSTANT_RATE.value == "constant_rate"
+        assert BenchmarkMode.ARRIVALS.value == "arrivals"
+        assert BenchmarkMode.ULTIMATE.value == "ultimate"
+        assert BenchmarkMode.DURATION.value == "duration"
+    
+    def test_mode_from_string(self):
+        """Test creating mode from string value."""
+        assert BenchmarkMode("parallel") == BenchmarkMode.PARALLEL
+        assert BenchmarkMode("ramp_up") == BenchmarkMode.RAMP_UP
+        assert BenchmarkMode("constant_rate") == BenchmarkMode.CONSTANT_RATE
+        assert BenchmarkMode("ultimate") == BenchmarkMode.ULTIMATE
+
+
+class TestLoadProfile:
+    """Tests for LoadProfile dataclass."""
+    
+    def test_load_profile_defaults(self):
+        """Test LoadProfile with default values."""
+        profile = LoadProfile()
+        assert profile.ramp_up_time == 0.0
+        assert profile.ramp_up_steps == 1
+        assert profile.hold_time == 0.0
+        assert profile.ramp_down_time == 0.0
+        assert profile.target_rps == 0.0
+        assert profile.spike_multiplier == 2.0
+        assert profile.spike_duration == 5.0
+        assert profile.arrival_rate == 10.0
+        assert profile.duration_seconds == 60.0
+        assert profile.stages == []
+    
+    def test_load_profile_ramp_up(self):
+        """Test LoadProfile for ramp-up mode."""
+        profile = LoadProfile(
+            ramp_up_time=30.0,
+            ramp_up_steps=10,
+            hold_time=60.0
+        )
+        assert profile.ramp_up_time == 30.0
+        assert profile.ramp_up_steps == 10
+        assert profile.hold_time == 60.0
+    
+    def test_load_profile_spike(self):
+        """Test LoadProfile for spike testing."""
+        profile = LoadProfile(
+            spike_multiplier=5.0,
+            spike_duration=10.0
+        )
+        assert profile.spike_multiplier == 5.0
+        assert profile.spike_duration == 10.0
+    
+    def test_load_profile_constant_rate(self):
+        """Test LoadProfile for constant rate mode."""
+        profile = LoadProfile(
+            target_rps=100.0
+        )
+        assert profile.target_rps == 100.0
+    
+    def test_load_profile_arrivals(self):
+        """Test LoadProfile for arrivals mode."""
+        profile = LoadProfile(
+            arrival_rate=50.0
+        )
+        assert profile.arrival_rate == 50.0
+    
+    def test_load_profile_ultimate_stages(self):
+        """Test LoadProfile with ultimate thread group stages."""
+        stages = [
+            (0, 10, 10.0),    # Ramp to 10 threads
+            (10, 50, 20.0),   # Ramp to 50 threads
+            (50, 50, 30.0),   # Hold at 50
+            (50, 0, 10.0),    # Ramp down
+        ]
+        profile = LoadProfile(stages=stages)
+        assert len(profile.stages) == 4
+        assert profile.stages[0] == (0, 10, 10.0)
+        assert profile.stages[2] == (50, 50, 30.0)
+    
+    def test_load_profile_duration(self):
+        """Test LoadProfile for duration-based testing."""
+        profile = LoadProfile(
+            duration_seconds=120.0
+        )
+        assert profile.duration_seconds == 120.0
+
+
+class TestQueueMetrics:
+    """Tests for QueueMetrics dataclass."""
+    
+    def test_queue_metrics_defaults(self):
+        """Test QueueMetrics with default values."""
+        qm = QueueMetrics()
+        assert qm.queue_depth_samples == []
+        assert qm.wait_times == []
+        assert qm.processing_times == []
+        assert qm.rejection_count == 0
+        assert qm.timeout_count == 0
+        assert qm.max_observed_queue_depth == 0
+        assert qm.avg_queue_depth == 0.0
+    
+    def test_queue_metrics_calculate(self):
+        """Test QueueMetrics calculation."""
+        qm = QueueMetrics()
+        qm.queue_depth_samples = [
+            (0.1, 5),
+            (0.2, 10),
+            (0.3, 8),
+            (0.4, 3),
+        ]
+        qm.wait_times = [0.1, 0.2, 0.15]
+        qm.processing_times = [0.5, 0.6, 0.55]
+        qm.rejection_count = 2
+        qm.timeout_count = 1
+        
+        qm.calculate()
+        
+        assert qm.max_observed_queue_depth == 10
+        assert qm.avg_queue_depth == 6.5  # (5+10+8+3)/4
+    
+    def test_queue_metrics_calculate_empty(self):
+        """Test QueueMetrics calculation with empty data."""
+        qm = QueueMetrics()
+        qm.calculate()
+        assert qm.max_observed_queue_depth == 0
+        assert qm.avg_queue_depth == 0.0
+
+
+class TestScenarioConfigJMeterParams:
+    """Tests for ScenarioConfig with JMeter-style parameters."""
+    
+    def test_scenario_config_jmeter_defaults(self):
+        """Test ScenarioConfig JMeter parameters have defaults."""
+        config = ScenarioConfig(
+            name="test",
+            requests=100,
+            concurrency=10
+        )
+        assert config.mode == "parallel"
+        assert config.ramp_up_time == 0.0
+        assert config.ramp_up_steps == 1
+        assert config.hold_time == 0.0
+        assert config.target_rps == 0.0
+        assert config.spike_multiplier == 2.0
+        assert config.spike_duration == 5.0
+        assert config.arrival_rate == 10.0
+        assert config.duration_seconds == 60.0
+        assert config.stages == []
+    
+    def test_scenario_config_ramp_up(self):
+        """Test ScenarioConfig for ramp-up mode."""
+        config = ScenarioConfig(
+            name="ramp_test",
+            requests=200,
+            concurrency=40,
+            mode="ramp_up",
+            ramp_up_time=30.0,
+            ramp_up_steps=10,
+            hold_time=60.0
+        )
+        assert config.mode == "ramp_up"
+        assert config.ramp_up_time == 30.0
+        assert config.ramp_up_steps == 10
+        assert config.hold_time == 60.0
+    
+    def test_scenario_config_spike(self):
+        """Test ScenarioConfig for spike testing."""
+        config = ScenarioConfig(
+            name="spike_test",
+            requests=200,
+            concurrency=20,
+            mode="spike",
+            spike_multiplier=5.0,
+            spike_duration=10.0
+        )
+        assert config.mode == "spike"
+        assert config.spike_multiplier == 5.0
+        assert config.spike_duration == 10.0
+    
+    def test_scenario_config_constant_rate(self):
+        """Test ScenarioConfig for constant rate mode."""
+        config = ScenarioConfig(
+            name="constant_test",
+            requests=300,
+            concurrency=30,
+            mode="constant_rate",
+            target_rps=50.0
+        )
+        assert config.mode == "constant_rate"
+        assert config.target_rps == 50.0
+    
+    def test_scenario_config_ultimate(self):
+        """Test ScenarioConfig for ultimate thread group."""
+        stages = [
+            (0, 10, 10),
+            (10, 50, 20),
+            (50, 50, 30),
+            (50, 0, 10),
+        ]
+        config = ScenarioConfig(
+            name="ultimate_test",
+            requests=500,
+            concurrency=50,
+            mode="ultimate",
+            stages=stages
+        )
+        assert config.mode == "ultimate"
+        assert len(config.stages) == 4
+
+
+class TestLoadScenariosWithJMeterParams:
+    """Tests for loading scenarios with JMeter-style parameters."""
+    
+    def test_load_scenarios_with_jmeter_params(self):
+        """Test loading scenarios with all JMeter parameters."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scenario_path = Path(tmpdir) / "scenario.yml"
+            scenario_content = """
+scenarios:
+  - name: "ramp_test"
+    requests: 200
+    concurrency: 40
+    mode: "ramp_up"
+    ramp_up_time: 30.0
+    ramp_up_steps: 10
+    hold_time: 60.0
+    
+  - name: "spike_test"
+    requests: 200
+    concurrency: 20
+    mode: "spike"
+    spike_multiplier: 5.0
+    spike_duration: 10.0
+    
+  - name: "constant_test"
+    requests: 300
+    concurrency: 30
+    mode: "constant_rate"
+    target_rps: 50.0
+    
+  - name: "arrivals_test"
+    requests: 200
+    concurrency: 100
+    mode: "arrivals"
+    arrival_rate: 25.0
+    
+  - name: "duration_test"
+    requests: 100
+    concurrency: 15
+    mode: "duration"
+    duration_seconds: 120.0
+"""
+            with open(scenario_path, 'w', encoding='utf-8') as f:
+                f.write(scenario_content)
+            
+            scenarios = load_scenarios(scenario_path, ScenarioDefaults())
+            
+            assert len(scenarios) == 5
+            
+            # Check ramp-up scenario
+            ramp = scenarios[0]
+            assert ramp.name == "ramp_test"
+            assert ramp.mode == "ramp_up"
+            assert ramp.ramp_up_time == 30.0
+            assert ramp.ramp_up_steps == 10
+            assert ramp.hold_time == 60.0
+            
+            # Check spike scenario
+            spike = scenarios[1]
+            assert spike.mode == "spike"
+            assert spike.spike_multiplier == 5.0
+            assert spike.spike_duration == 10.0
+            
+            # Check constant rate scenario
+            constant = scenarios[2]
+            assert constant.mode == "constant_rate"
+            assert constant.target_rps == 50.0
+            
+            # Check arrivals scenario
+            arrivals = scenarios[3]
+            assert arrivals.mode == "arrivals"
+            assert arrivals.arrival_rate == 25.0
+            
+            # Check duration scenario
+            duration = scenarios[4]
+            assert duration.mode == "duration"
+            assert duration.duration_seconds == 120.0
+    
+    def test_load_scenarios_with_stages(self):
+        """Test loading scenarios with ultimate thread group stages."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scenario_path = Path(tmpdir) / "scenario.yml"
+            scenario_content = """
+scenarios:
+  - name: "ultimate_test"
+    requests: 500
+    concurrency: 50
+    mode: "ultimate"
+    stages:
+      - { start: 0, end: 10, duration: 10 }
+      - { start: 10, end: 50, duration: 20 }
+      - { start: 50, end: 50, duration: 30 }
+      - { start: 50, end: 0, duration: 10 }
+"""
+            with open(scenario_path, 'w', encoding='utf-8') as f:
+                f.write(scenario_content)
+            
+            scenarios = load_scenarios(scenario_path, ScenarioDefaults())
+            
+            assert len(scenarios) == 1
+            ultimate = scenarios[0]
+            assert ultimate.mode == "ultimate"
+            assert len(ultimate.stages) == 4
+            assert ultimate.stages[0] == (0, 10, 10)
+            assert ultimate.stages[1] == (10, 50, 20)
+            assert ultimate.stages[2] == (50, 50, 30)
+            assert ultimate.stages[3] == (50, 0, 10)
+
+
+# ============================================================================
+# Debug Logger Tests
+# ============================================================================
+
+class TestDebugLogger:
+    """Tests for DebugLogger class."""
+    
+    def test_debug_logger_creation(self):
+        """Test DebugLogger instantiation."""
+        from llm_benchmark.debug_logger import DebugLogger
+        import logging
+        
+        logger = DebugLogger(
+            name="test_logger",
+            level=logging.DEBUG,
+            console_output=False,
+            file_output=False
+        )
+        
+        assert logger.console_output == False
+        assert logger.file_output == False
+        assert logger._start_time is None
+        assert logger._request_count == 0
+        assert logger._mode is None
+    
+    def test_debug_logger_level(self):
+        """Test debug logger level changes."""
+        from llm_benchmark.debug_logger import DebugLogger
+        import logging
+        
+        logger = DebugLogger(
+            name="test_level_logger",
+            level=logging.DEBUG,
+            console_output=False,
+            file_output=False
+        )
+        
+        assert logger.is_debug_enabled() == True
+        
+        logger.set_level(logging.WARNING)
+        assert logger.is_debug_enabled() == False
+        
+        logger.set_level(logging.DEBUG)
+        assert logger.is_debug_enabled() == True
+    
+    def test_debug_logger_elapsed(self):
+        """Test elapsed time formatting."""
+        from llm_benchmark.debug_logger import DebugLogger
+        import logging
+        import time
+        
+        logger = DebugLogger(
+            name="test_elapsed_logger",
+            level=logging.DEBUG,
+            console_output=False,
+            file_output=False
+        )
+        
+        # Before start_time is set
+        elapsed = logger._elapsed()
+        assert elapsed == "[+    0.000s]"
+        
+        # After start_time is set
+        logger._start_time = time.perf_counter()
+        time.sleep(0.01)
+        elapsed = logger._elapsed()
+        assert "[+" in elapsed
+        assert "s]" in elapsed
+    
+    def test_debug_logger_mode_start(self):
+        """Test mode_start sets state correctly."""
+        from llm_benchmark.debug_logger import DebugLogger
+        import logging
+        
+        logger = DebugLogger(
+            name="test_mode_logger",
+            level=logging.DEBUG,
+            console_output=False,
+            file_output=False
+        )
+        
+        logger.mode_start("ramp_up", "test_scenario", {"key": "value"})
+        
+        assert logger._mode == "ramp_up"
+        assert logger._request_count == 0
+        assert logger._start_time is not None
+    
+    def test_debug_logger_request_submit(self):
+        """Test request_submit increments counter."""
+        from llm_benchmark.debug_logger import DebugLogger
+        import logging
+        
+        logger = DebugLogger(
+            name="test_request_logger",
+            level=logging.DEBUG,
+            console_output=False,
+            file_output=False
+        )
+        
+        assert logger._request_count == 0
+        
+        logger.request_submit(1, 5)
+        assert logger._request_count == 1
+        
+        logger.request_submit(2, 6)
+        assert logger._request_count == 2
+
+
+class TestDebugLoggerGlobalFunctions:
+    """Tests for global debug logger functions."""
+    
+    def test_get_debug_logger(self):
+        """Test get_debug_logger returns consistent instance."""
+        from llm_benchmark.debug_logger import get_debug_logger, reset_debug_logger
+        
+        # Reset first to ensure clean state
+        reset_debug_logger()
+        
+        logger1 = get_debug_logger()
+        logger2 = get_debug_logger()
+        
+        assert logger1 is logger2
+    
+    def test_reset_debug_logger(self):
+        """Test reset_debug_logger creates new instance."""
+        from llm_benchmark.debug_logger import get_debug_logger, reset_debug_logger
+        
+        logger1 = get_debug_logger()
+        logger2 = reset_debug_logger(console_output=True)
+        
+        assert logger2.console_output == True
+    
+    def test_enable_disable_debug_logging(self):
+        """Test enable/disable debug logging."""
+        from llm_benchmark.debug_logger import (
+            enable_debug_logging, 
+            disable_debug_logging, 
+            get_debug_logger,
+            reset_debug_logger
+        )
+        import logging
+        
+        reset_debug_logger()
+        
+        enable_debug_logging(logging.DEBUG)
+        logger = get_debug_logger()
+        assert logger.is_debug_enabled() == True
+        
+        disable_debug_logging()
+        assert logger.is_debug_enabled() == False
+
+
+# ============================================================================
+# Mode Runner Tests
+# ============================================================================
+
+class TestModeRunners:
+    """Tests for mode runner classes."""
+    
+    def test_get_mode_runner_ramp_up(self):
+        """Test get_mode_runner returns RampUpRunner."""
+        from llm_benchmark.mode_runners import get_mode_runner, RampUpRunner
+        from llm_benchmark.modes import BenchmarkMode
+        
+        runner = get_mode_runner(BenchmarkMode.RAMP_UP)
+        assert isinstance(runner, RampUpRunner)
+    
+    def test_get_mode_runner_stepping(self):
+        """Test get_mode_runner returns SteppingRunner."""
+        from llm_benchmark.mode_runners import get_mode_runner, SteppingRunner
+        from llm_benchmark.modes import BenchmarkMode
+        
+        runner = get_mode_runner(BenchmarkMode.STEPPING)
+        assert isinstance(runner, SteppingRunner)
+    
+    def test_get_mode_runner_spike(self):
+        """Test get_mode_runner returns SpikeRunner."""
+        from llm_benchmark.mode_runners import get_mode_runner, SpikeRunner
+        from llm_benchmark.modes import BenchmarkMode
+        
+        runner = get_mode_runner(BenchmarkMode.SPIKE)
+        assert isinstance(runner, SpikeRunner)
+    
+    def test_get_mode_runner_constant_rate(self):
+        """Test get_mode_runner returns ConstantRateRunner."""
+        from llm_benchmark.mode_runners import get_mode_runner, ConstantRateRunner
+        from llm_benchmark.modes import BenchmarkMode
+        
+        runner = get_mode_runner(BenchmarkMode.CONSTANT_RATE)
+        assert isinstance(runner, ConstantRateRunner)
+    
+    def test_get_mode_runner_arrivals(self):
+        """Test get_mode_runner returns ArrivalsRunner."""
+        from llm_benchmark.mode_runners import get_mode_runner, ArrivalsRunner
+        from llm_benchmark.modes import BenchmarkMode
+        
+        runner = get_mode_runner(BenchmarkMode.ARRIVALS)
+        assert isinstance(runner, ArrivalsRunner)
+    
+    def test_get_mode_runner_ultimate(self):
+        """Test get_mode_runner returns UltimateRunner."""
+        from llm_benchmark.mode_runners import get_mode_runner, UltimateRunner
+        from llm_benchmark.modes import BenchmarkMode
+        
+        runner = get_mode_runner(BenchmarkMode.ULTIMATE)
+        assert isinstance(runner, UltimateRunner)
+    
+    def test_get_mode_runner_duration(self):
+        """Test get_mode_runner returns DurationRunner."""
+        from llm_benchmark.mode_runners import get_mode_runner, DurationRunner
+        from llm_benchmark.modes import BenchmarkMode
+        
+        runner = get_mode_runner(BenchmarkMode.DURATION)
+        assert isinstance(runner, DurationRunner)
+    
+    def test_get_mode_runner_parallel_returns_none(self):
+        """Test get_mode_runner returns None for PARALLEL mode."""
+        from llm_benchmark.mode_runners import get_mode_runner
+        from llm_benchmark.modes import BenchmarkMode
+        
+        runner = get_mode_runner(BenchmarkMode.PARALLEL)
+        assert runner is None
+    
+    def test_get_mode_runner_controlled_returns_none(self):
+        """Test get_mode_runner returns None for CONTROLLED mode."""
+        from llm_benchmark.mode_runners import get_mode_runner
+        from llm_benchmark.modes import BenchmarkMode
+        
+        runner = get_mode_runner(BenchmarkMode.CONTROLLED)
+        assert runner is None
+    
+    def test_mode_runner_debug_flag(self):
+        """Test mode runner accepts debug flag."""
+        from llm_benchmark.mode_runners import RampUpRunner
+        from llm_benchmark.debug_logger import DebugLogger
+        import logging
+        
+        debug_logger = DebugLogger(
+            name="test_runner_logger",
+            level=logging.DEBUG,
+            console_output=False,
+            file_output=False
+        )
+        
+        runner = RampUpRunner(debug=True, debug_logger=debug_logger)
+        
+        assert runner.debug == True
+        assert runner._debug_logger is debug_logger
+
+
+# ============================================================================
+# Queue Metrics Extended Tests
+# ============================================================================
+
+class TestQueueMetricsExtended:
+    """Extended tests for QueueMetrics class."""
+    
+    def test_queue_metrics_record_rejection(self):
+        """Test recording rejections."""
+        from llm_benchmark.modes import QueueMetrics
+        
+        qm = QueueMetrics()
+        assert qm.rejection_count == 0
+        
+        qm.record_rejection()
+        assert qm.rejection_count == 1
+        
+        qm.record_rejection()
+        assert qm.rejection_count == 2
+    
+    def test_queue_metrics_record_timeout(self):
+        """Test recording timeouts."""
+        from llm_benchmark.modes import QueueMetrics
+        
+        qm = QueueMetrics()
+        assert qm.timeout_count == 0
+        
+        qm.record_timeout()
+        assert qm.timeout_count == 1
+        
+        qm.record_timeout()
+        assert qm.timeout_count == 2
+    
+    def test_queue_metrics_add_queue_sample(self):
+        """Test adding queue samples."""
+        from llm_benchmark.modes import QueueMetrics
+        
+        qm = QueueMetrics()
+        assert len(qm.queue_depth_samples) == 0
+        
+        qm.add_queue_sample(1.0, 5)
+        assert len(qm.queue_depth_samples) == 1
+        assert qm.queue_depth_samples[0] == (1.0, 5)
+        
+        qm.add_queue_sample(2.0, 10)
+        assert len(qm.queue_depth_samples) == 2
+    
+    def test_queue_metrics_add_wait_time(self):
+        """Test adding wait times with threshold."""
+        from llm_benchmark.modes import QueueMetrics
+        
+        qm = QueueMetrics()
+        
+        # Small wait time should not be recorded
+        qm.add_wait_time(0.0005)
+        assert len(qm.wait_times) == 0
+        
+        # Larger wait time should be recorded
+        qm.add_wait_time(0.01)
+        assert len(qm.wait_times) == 1
+        assert qm.wait_times[0] == 0.01
+    
+    def test_queue_metrics_add_processing_time(self):
+        """Test adding processing times."""
+        from llm_benchmark.modes import QueueMetrics
+        
+        qm = QueueMetrics()
+        
+        # None should not be recorded
+        qm.add_processing_time(None)
+        assert len(qm.processing_times) == 0
+        
+        # Zero should not be recorded
+        qm.add_processing_time(0)
+        assert len(qm.processing_times) == 0
+        
+        # Valid time should be recorded
+        qm.add_processing_time(0.5)
+        assert len(qm.processing_times) == 1
+        assert qm.processing_times[0] == 0.5
+
+
+# ============================================================================
+# Load Profile Extended Tests
+# ============================================================================
+
+class TestLoadProfileExtended:
+    """Extended tests for LoadProfile class."""
+    
+    def test_load_profile_from_scenario(self):
+        """Test LoadProfile.from_scenario method."""
+        from llm_benchmark.modes import LoadProfile
+        from llm_benchmark.config import ScenarioConfig
+        
+        scenario = ScenarioConfig(
+            name="test",
+            requests=100,
+            concurrency=10,
+            ramp_up_time=30.0,
+            ramp_up_steps=5,
+            hold_time=60.0,
+            target_rps=50.0,
+            spike_multiplier=3.0,
+            spike_duration=10.0,
+            arrival_rate=20.0,
+            duration_seconds=120.0
+        )
+        
+        profile = LoadProfile.from_scenario(scenario)
+        
+        assert profile.ramp_up_time == 30.0
+        assert profile.ramp_up_steps == 5
+        assert profile.hold_time == 60.0
+        assert profile.target_rps == 50.0
+        assert profile.spike_multiplier == 3.0
+        assert profile.spike_duration == 10.0
+        assert profile.arrival_rate == 20.0
+        assert profile.duration_seconds == 120.0
+    
+    def test_load_profile_from_scenario_with_stages(self):
+        """Test LoadProfile.from_scenario with stages."""
+        from llm_benchmark.modes import LoadProfile
+        from llm_benchmark.config import ScenarioConfig
+        
+        scenario = ScenarioConfig(
+            name="test",
+            requests=100,
+            concurrency=10,
+            stages=[(0, 10, 5), (10, 20, 10), (20, 0, 5)]
+        )
+        
+        profile = LoadProfile.from_scenario(scenario)
+        
+        assert len(profile.stages) == 3
+        assert profile.stages[0] == (0, 10, 5)
+        assert profile.stages[1] == (10, 20, 10)
+        assert profile.stages[2] == (20, 0, 5)
+
+
+# ============================================================================
+# Benchmark Mode Extended Tests
+# ============================================================================
+
+class TestBenchmarkModeExtended:
+    """Extended tests for BenchmarkMode enum."""
+    
+    def test_benchmark_mode_from_string_case_insensitive(self):
+        """Test BenchmarkMode.from_string is case insensitive."""
+        from llm_benchmark.modes import BenchmarkMode
+        
+        assert BenchmarkMode.from_string("PARALLEL") == BenchmarkMode.PARALLEL
+        assert BenchmarkMode.from_string("Parallel") == BenchmarkMode.PARALLEL
+        assert BenchmarkMode.from_string("parallel") == BenchmarkMode.PARALLEL
+        
+        assert BenchmarkMode.from_string("RAMP_UP") == BenchmarkMode.RAMP_UP
+        assert BenchmarkMode.from_string("ramp_up") == BenchmarkMode.RAMP_UP
+    
+    def test_benchmark_mode_from_string_invalid(self):
+        """Test BenchmarkMode.from_string with invalid value."""
+        from llm_benchmark.modes import BenchmarkMode
+        
+        with pytest.raises(ValueError):
+            BenchmarkMode.from_string("invalid_mode")
+    
+    def test_benchmark_mode_all_values(self):
+        """Test all BenchmarkMode values can be converted."""
+        from llm_benchmark.modes import BenchmarkMode
+        
+        for mode in BenchmarkMode:
+            result = BenchmarkMode.from_string(mode.value)
+            assert result == mode
 
 
 if __name__ == "__main__":

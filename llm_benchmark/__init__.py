@@ -19,7 +19,35 @@ from .config import (
     BenchmarkConfig,
     load_config,
 )
-from .engine import BenchmarkEngine, run_benchmark
+
+# Import from modular structure
+from .debug_logger import (
+    DebugLogger,
+    enable_debug_logging,
+    disable_debug_logging,
+    get_debug_logger,
+    reset_debug_logger,
+)
+from .modes import (
+    BenchmarkMode,
+    LoadProfile,
+    QueueMetrics,
+)
+from .mode_runners import (
+    ModeRunner,
+    RampUpRunner,
+    SteppingRunner,
+    SpikeRunner,
+    ConstantRateRunner,
+    ArrivalsRunner,
+    UltimateRunner,
+    DurationRunner,
+    get_mode_runner,
+)
+from .engine import (
+    BenchmarkEngine, 
+    run_benchmark,
+)
 from .metrics import RequestMetrics, BenchmarkMetrics, MetricsCollector
 from .exporters import export_results
 from .timeseries import TimeseriesWriter, TimeseriesReader, load_all_timeseries
@@ -36,6 +64,26 @@ __all__ = [
     # Engine
     "BenchmarkEngine",
     "run_benchmark",
+    # Modes
+    "BenchmarkMode",
+    "LoadProfile",
+    "QueueMetrics",
+    # Mode Runners
+    "ModeRunner",
+    "RampUpRunner",
+    "SteppingRunner",
+    "SpikeRunner",
+    "ConstantRateRunner",
+    "ArrivalsRunner",
+    "UltimateRunner",
+    "DurationRunner",
+    "get_mode_runner",
+    # Debug
+    "DebugLogger",
+    "enable_debug_logging",
+    "disable_debug_logging",
+    "get_debug_logger",
+    "reset_debug_logger",
     # Metrics
     "RequestMetrics",
     "BenchmarkMetrics",

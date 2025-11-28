@@ -7,6 +7,8 @@ A comprehensive benchmarking tool for OpenAI-compatible APIs. This tool supports
 - ✅ **Multi-Model Support**: Benchmark chat, embedding, reranker, and vision models
 - ✅ **Configurable Load Testing**: Set number of requests and concurrency levels
 - ✅ **Batch Scenarios**: Run multiple benchmark scenarios in sequence
+- ✅ **JMeter-Style Execution Modes**: Parallel, ramp-up, stepping, spike, constant rate, arrivals, ultimate thread group
+- ✅ **Queue Testing**: Analyze inference server queue behavior (Ollama, vLLM, TGI)
 - ✅ **Progress Visualization**: Real-time progress bar with tqdm
 - ✅ **Response Capture**: Optional capture of full API responses for analysis
 - ✅ **Multiple Export Formats**: Export results to Markdown, CSV, and JSON
@@ -140,6 +142,7 @@ defaults:
   warmup_requests: 1
   timeout: 60
   enabled: true
+  mode: "parallel"
 
 # Benchmark Scenarios
 scenarios:
@@ -147,19 +150,179 @@ scenarios:
     requests: 50
     concurrency: 5
     description: "Light load test"
-    warmup_requests: 2
+    mode: "controlled"  # Semaphore-limited concurrency
   
   - name: "medium_load"
     requests: 100
     concurrency: 10
     description: "Medium load test"
-    timeout: 120
+    mode: "parallel"  # All requests at once
   
-  - name: "heavy_load"
-    requests: 500
-    concurrency: 50
-    description: "Heavy load stress test"
-    enabled: true  # Set to false to skip
+  - name: "ramp_up_test"
+    requests: 200
+    concurrency: 40
+    description: "JMeter-style ramp-up"
+    mode: "ramp_up"
+    ramp_up_time: 30.0    # 30s to reach full concurrency
+    ramp_up_steps: 10     # 10 steps during ramp
+    hold_time: 60.0       # Hold at target for 60s
+  
+  - name: "spike_test"
+    requests: 200
+    concurrency: 20
+    description: "Spike testing"
+    mode: "spike"
+    spike_multiplier: 5.0  # 5x spike (20 -> 100)
+    spike_duration: 10.0   # Spike lasts 10 seconds
+```
+
+## Execution Modes
+
+Based on JMeter Thread Group patterns, the tool supports multiple execution modes:
+
+### Basic Modes
+
+| Mode | Description |
+|------|-------------|
+| `parallel` | All requests launched simultaneously (tests max queue pressure) |
+| `controlled` | Uses semaphore to limit concurrent requests |
+| `queue_test` | Burst mode to analyze queue behavior (Ollama/vLLM/TGI) |
+
+### JMeter-Style Modes
+
+| Mode | Description | Key Parameters |
+|------|-------------|----------------|
+| `ramp_up` | Linear ramp-up like JMeter's Thread Group | `ramp_up_time`, `ramp_up_steps`, `hold_time` |
+| `stepping` | Stepping Thread Group - add users in discrete steps | `ramp_up_steps`, `hold_time` |
+| `spike` | Spike testing - sudden burst then sustain | `spike_multiplier`, `spike_duration` |
+| `constant_rate` | Constant Throughput Timer - fixed RPS | `target_rps` |
+| `arrivals` | Arrivals Thread Group - control arrival rate | `arrival_rate` |
+| `ultimate` | Ultimate Thread Group - complex multi-phase pattern | `stages` |
+| `duration` | Run for fixed time, cycling through requests | `duration_seconds` |
+
+### Mode Configuration Examples
+
+#### Ramp-Up Mode
+Linear increase of concurrent users over time:
+```yaml
+- name: "ramp_up_test"
+  requests: 200
+  concurrency: 40
+  mode: "ramp_up"
+  ramp_up_time: 30.0      # Reach target in 30 seconds
+  ramp_up_steps: 10       # 10 steps: +4 users each
+  hold_time: 60.0         # Hold at 40 users for 60 seconds
+```
+
+#### Stepping Thread Group
+Add users in discrete steps with hold time:
+```yaml
+- name: "stepping_load"
+  requests: 300
+  concurrency: 50
+  mode: "stepping"
+  ramp_up_steps: 5        # 5 steps: +10 users each
+  hold_time: 10.0         # Hold 10 seconds at each level
+```
+
+#### Spike Testing
+Sudden burst of traffic:
+```yaml
+- name: "spike_test"
+  requests: 200
+  concurrency: 20          # Base concurrency
+  mode: "spike"
+  spike_multiplier: 5.0    # 5x spike (20 -> 100 concurrent)
+  spike_duration: 10.0     # Spike lasts 10 seconds
+```
+
+#### Constant Throughput
+Fixed requests per second:
+```yaml
+- name: "constant_throughput"
+  requests: 300
+  concurrency: 30          # Max concurrent limit
+  mode: "constant_rate"
+  target_rps: 10.0         # 10 requests per second
+```
+
+#### Arrivals Thread Group
+Control arrival rate (no concurrency limit):
+```yaml
+- name: "arrivals_test"
+  requests: 200
+  concurrency: 100         # High limit
+  mode: "arrivals"
+  arrival_rate: 20.0       # 20 new requests per second
+```
+
+#### Ultimate Thread Group
+Complex multi-phase load pattern:
+```yaml
+- name: "ultimate_pattern"
+  requests: 500
+  concurrency: 50
+  mode: "ultimate"
+  stages:
+    - { start: 0, end: 10, duration: 10 }    # Ramp to 10 in 10s
+    - { start: 10, end: 30, duration: 15 }   # Ramp to 30 in 15s
+    - { start: 30, end: 50, duration: 10 }   # Ramp to 50 in 10s
+    - { start: 50, end: 50, duration: 30 }   # Hold at 50 for 30s
+    - { start: 50, end: 20, duration: 10 }   # Ramp down to 20
+    - { start: 20, end: 0, duration: 10 }    # Ramp down to 0
+```
+
+#### Duration-Based Testing
+Run for fixed time:
+```yaml
+- name: "duration_test"
+  requests: 100            # Requests to cycle through
+  concurrency: 15
+  mode: "duration"
+  duration_seconds: 120.0  # Run for 2 minutes
+```
+
+## Queue Testing for Inference Servers
+
+The tool is optimized for testing queue behavior of LLM inference servers like Ollama, vLLM, and TGI.
+
+### Queue Metrics
+
+When running benchmarks, the following queue metrics are collected:
+
+| Metric | Description |
+|--------|-------------|
+| Peak Concurrent | Maximum simultaneous active requests |
+| Max Queue Depth | Maximum observed queue depth |
+| Avg Queue Depth | Average queue depth during test |
+| Avg Wait Time | Average time spent waiting in queue |
+| Max Wait Time | Maximum queue wait time |
+| Rejections | Requests rejected (HTTP 429/503) |
+| Timeouts | Requests that timed out |
+
+### Queue Test Scenario
+
+```yaml
+- name: "queue_depth_test"
+  description: "Test inference server queue handling"
+  requests: 100
+  concurrency: 100        # All requests at once
+  warmup_requests: 1
+  timeout: 180
+  mode: "queue_test"
+```
+
+### Example Output
+
+```
+📋 Queue Metrics:
+   Peak Concurrent:           100
+   Max Queue Depth:            85
+   Avg Queue Depth:         42.30
+   Avg Wait Time:        1523.45ms
+   Max Wait Time:        8234.12ms
+   ⚠️  Rejections (429/503): 5
+   ⚠️  Timeouts:             2
 ```
 
 ## Command Line Options
@@ -202,7 +365,85 @@ Options:
   # Display Settings
   --quiet, -q             Hide progress bar
   --verbose, -v           Verbose output
+  
+  # Debug Settings
+  --debug, -d             Enable detailed debug logging (outputs to debug.log)
+  --debug-console         Also print debug output to console (requires --debug)
 ```
+
+## Debug Logging
+
+The tool includes comprehensive debug logging to help verify execution modes work correctly and trace issues during testing.
+
+### Enable Debug Mode
+
+```bash
+# Basic debug logging to file
+python benchmark.py --scenarios --debug
+
+# Debug logging to both file and console
+python benchmark.py --scenarios --debug --debug-console
+
+# Debug a specific scenario
+python benchmark.py --scenario ramp_up_test --debug
+```
+
+### Debug Output
+
+When debug mode is enabled, detailed logs are written to `debug.log` in the current directory:
+
+```
+[2024-01-15 10:30:15.123] [LOG] [+0.000s] ========================================
+[2024-01-15 10:30:15.124] [LOG] [+0.001s] SCENARIO START: ramp_up_test
+[2024-01-15 10:30:15.125] [LOG] [+0.002s]   Mode:        ramp_up
+[2024-01-15 10:30:15.125] [LOG] [+0.002s]   Concurrency: 40
+[2024-01-15 10:30:15.126] [LOG] [+0.003s]   Requests:    200
+[2024-01-15 10:30:15.130] [LOG] [+0.007s] MODE START: RAMP_UP
+[2024-01-15 10:30:15.131] [LOG] [+0.008s]   Target Concurrency: 40
+[2024-01-15 10:30:15.131] [LOG] [+0.008s]   Ramp Up Time: 30.0s
+[2024-01-15 10:30:15.132] [LOG] [+0.009s]   Steps: 10
+[2024-01-15 10:30:15.132] [LOG] [+0.009s]   Hold Time: 60.0s
+[2024-01-15 10:30:15.135] [LOG] [+0.012s] STEP 1/10: concurrency=4, requests=20, duration=3.0s
+[2024-01-15 10:30:15.140] [DEBUG] [+0.017s] REQ #1 START (concurrent: 1)
+[2024-01-15 10:30:15.523] [DEBUG] [+0.400s] REQ #1 COMPLETE: 382.5ms, success=True, tokens=45
+...
+[2024-01-15 10:31:45.678] [LOG] [+90.555s] STEP 1/10 COMPLETE: 20 requests in 3.012s
+[2024-01-15 10:31:45.680] [LOG] [+90.557s] CONCURRENCY CHANGE: 4 -> 8 (ramp_up step 2)
+...
+```
+
+### Debug Log Levels
+
+| Level | Description |
+|-------|-------------|
+| `LOG` | High-level scenario and mode information |
+| `DEBUG` | Request-level details (start/complete) |
+| `TRACE` | Fine-grained internal operations |
+| `INFO` | General information messages |
+| `WARN` | Warning conditions |
+| `ERROR` | Error conditions |
+
+### Debug Information Per Mode
+
+Each execution mode logs specific information:
+
+| Mode | Debug Information |
+|------|-------------------|
+| `ramp_up` | Step progression, concurrency changes, timing |
+| `stepping` | Step start/complete, requests per step |
+| `spike` | Pre-spike, spike, and post-spike phases |
+| `constant_rate` | Target vs actual RPS, rate adjustments |
+| `arrivals` | Arrival rate, delay calculations |
+| `ultimate` | Stage progression, target concurrency changes |
+| `duration` | Progress checkpoints, total requests sent |
+
+### Use Cases for Debug Logging
+
+1. **Verify Execution Modes**: Confirm that ramp-up, stepping, and spike patterns execute as expected
+2. **Trace Request Lifecycle**: See exactly when each request starts and completes
+3. **Diagnose Issues**: Identify slow requests, failures, and bottlenecks
+4. **Validate Concurrency**: Confirm concurrency limits are being respected
+5. **Performance Analysis**: Analyze timing between steps and phases
 
 ## Usage Examples
 
