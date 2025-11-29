@@ -21,3 +21,6 @@ pydantic>=2.10.2
 
 # Rich console output (optional)
 rich>=13.9.4
+
+# Structured logging
+structlog>=24.4.0

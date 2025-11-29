@@ -1890,15 +1890,15 @@ class TestDebugLogger:
         )
         
         # Before start_time is set
-        elapsed = logger._elapsed()
-        assert elapsed == "[+    0.000s]"
+        elapsed_ctx = logger._with_elapsed()
+        assert elapsed_ctx == {}  # No elapsed time when start_time is not set
         
         # After start_time is set
         logger._start_time = time.perf_counter()
         time.sleep(0.01)
-        elapsed = logger._elapsed()
-        assert "[+" in elapsed
-        assert "s]" in elapsed
+        elapsed_ctx = logger._with_elapsed()
+        assert "_start_time" in elapsed_ctx  # Contains start_time for processor
+        assert isinstance(elapsed_ctx["_start_time"], float)
     
     def test_debug_logger_mode_start(self):
         """Test mode_start sets state correctly."""

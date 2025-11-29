@@ -27,6 +27,11 @@ from .debug_logger import (
     disable_debug_logging,
     get_debug_logger,
     reset_debug_logger,
+    get_structlog_logger,
+    bind_contextvars,
+    clear_contextvars,
+    unbind_contextvars,
+    configure_structlog,
 )
 from .modes import (
     BenchmarkMode,
@@ -84,6 +89,11 @@ __all__ = [
     "disable_debug_logging",
     "get_debug_logger",
     "reset_debug_logger",
+    "get_structlog_logger",
+    "bind_contextvars",
+    "clear_contextvars",
+    "unbind_contextvars",
+    "configure_structlog",
     # Metrics
     "RequestMetrics",
     "BenchmarkMetrics",
