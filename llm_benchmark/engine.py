@@ -305,7 +305,22 @@ class BenchmarkEngine:
         self._active_requests = 0
         self._request_submit_times.clear()
         self._request_start_times.clear()
+        # Initialize user ID pool
+        self._user_id_pool = asyncio.Queue()
+        self._next_user_id = 1
     
+    async def _acquire_user_id(self) -> int:
+        """Get a user ID from the pool or create a new one."""
+        if self._user_id_pool.empty():
+            uid = self._next_user_id
+            self._next_user_id += 1
+            return uid
+        return await self._user_id_pool.get()
+
+    async def _release_user_id(self, uid: int):
+        """Return a user ID to the pool."""
+        await self._user_id_pool.put(uid)
+
     def _log_mode_start(self, scenario: ScenarioConfig, mode: BenchmarkMode, profile: LoadProfile):
         """Log mode start with configuration."""
         config_dict = {
@@ -378,7 +393,9 @@ class BenchmarkEngine:
             if sem:
                 await sem.acquire()
             
+            user_id = None
             try:
+                user_id = await engine._acquire_user_id()
                 current_concurrent = await engine._increment_active()
                 
                 if engine.debug:
@@ -396,7 +413,7 @@ class BenchmarkEngine:
                 
                 if engine.debug:
                     engine._debug_logger.request_start(
-                        request_id, wait_time * 1000, current_concurrent
+                        request_id, wait_time * 1000, current_concurrent, user_id=user_id
                     )
                     if wait_time > 0.01:
                         engine._debug_logger.queue_sample(current_concurrent, wait_time * 1000)
@@ -414,12 +431,12 @@ class BenchmarkEngine:
                 if engine.debug:
                     if error:
                         engine._debug_logger.request_error(
-                            request_id, error, (latency or 0) * 1000
+                            request_id, error, (latency or 0) * 1000, user_id=user_id
                         )
                     else:
                         engine._debug_logger.request_complete(
                             request_id, (latency or 0) * 1000,
-                            tokens or 0, error is None, remaining_concurrent
+                            tokens or 0, error is None, remaining_concurrent, user_id=user_id
                         )
                 
                 if latency:
@@ -455,6 +472,8 @@ class BenchmarkEngine:
                     pbar.update(1)
                     
             finally:
+                if user_id is not None:
+                    await engine._release_user_id(user_id)
                 if sem:
                     sem.release()
         

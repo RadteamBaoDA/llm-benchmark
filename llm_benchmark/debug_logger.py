@@ -343,11 +343,12 @@ class DebugLogger:
             **self._with_elapsed(),
         )
     
-    def request_start(self, request_id: int, wait_time_ms: float, concurrent: int) -> None:
+    def request_start(self, request_id: int, wait_time_ms: float, concurrent: int, user_id: Optional[int] = None) -> None:
         """Log request execution start."""
         self._logger.debug(
             "request_start",
             request_id=request_id,
+            user_id=user_id,
             wait_ms=wait_time_ms,
             concurrent=concurrent,
             **self._with_elapsed(),
@@ -359,13 +360,15 @@ class DebugLogger:
         latency_ms: float, 
         tokens: int, 
         success: bool, 
-        concurrent: int
+        concurrent: int,
+        user_id: Optional[int] = None
     ) -> None:
         """Log request completion."""
         log_method = self._logger.debug if success else self._logger.warning
         log_method(
             "request_complete",
             request_id=request_id,
+            user_id=user_id,
             latency_ms=latency_ms,
             tokens=tokens,
             success=success,
@@ -373,11 +376,12 @@ class DebugLogger:
             **self._with_elapsed(),
         )
     
-    def request_error(self, request_id: int, error: str, latency_ms: float) -> None:
+    def request_error(self, request_id: int, error: str, latency_ms: float, user_id: Optional[int] = None) -> None:
         """Log request error."""
         self._logger.warning(
             "request_error",
             request_id=request_id,
+            user_id=user_id,
             error=error,
             latency_ms=latency_ms,
             **self._with_elapsed(),
