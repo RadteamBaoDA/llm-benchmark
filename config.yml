@@ -1,0 +1,69 @@
+# LLM Benchmark Tool Configuration
+
+# API Configuration
+api:
+  base_url: "http://localhost:8000"
+  api_key: ""  # Or use environment variable OPENAI_API_KEY
+  timeout: 60
+
+# Model Configuration
+model:
+  name: "gpt-3.5-turbo"
+  type: "chat"  # Options: chat, embed, reranker, vision
+  max_tokens: 32
+  temperature: 0.2
+
+# Mock Data Configuration (used for generating benchmark requests)
+mock_data:
+  # Chat model prompts
+  chat_prompts:
+    - "Hello, world!"
+    - "What is the capital of France?"
+    - "Explain quantum computing in simple terms."
+    - "Write a haiku about programming."
+    - "What are the benefits of exercise?"
+  
+  # Embedding texts
+  embed_texts:
+    - "The quick brown fox jumps over the lazy dog."
+    - "Machine learning is a subset of artificial intelligence."
+    - "Python is a popular programming language."
+    - "Natural language processing enables computers to understand text."
+    - "Deep learning models require large amounts of data."
+  
+  # Reranker configuration
+  reranker_query: "What is machine learning?"
+  reranker_documents:
+    - "Machine learning is a type of artificial intelligence that allows computers to learn from data."
+    - "The weather today is sunny with a high of 75 degrees."
+    - "Python is commonly used for machine learning applications."
+    - "Machine learning algorithms can identify patterns in large datasets."
+    - "Coffee is one of the most popular beverages in the world."
+  
+  # Vision model configuration
+  vision_prompts:
+    - "Describe this image in detail."
+    - "What objects can you see in this image?"
+    - "What is the main subject of this image?"
+  vision_image_url: "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3a/Cat03.jpg/1200px-Cat03.jpg"
+  # vision_image_base64: null  # Optional: base64 encoded image
+  # vision_image_path: null  # Optional: single local image path (e.g., "./images/test.jpg")
+  # vision_image_paths:  # Optional: multiple local image paths (cycles through them)
+  #   - "./images/image1.jpg"
+  #   - "./images/image2.png"
+  #   - "./images/image3.webp"
+
+# Scenario Configuration
+# Scenarios are defined in a separate file for better organization
+scenario_file: "scenario.yml"
+
+# Benchmark Settings
+benchmark:
+  default_requests: 100
+  default_concurrency: 10
+  capture_responses: false
+  output_dir: "results"
+  export_formats:
+    - "markdown"
+    - "csv"
+  quiet: false
