@@ -8,9 +8,9 @@ api:
 
 # Model Configuration
 model:
-  name: "gpt-3.5-turbo"
-  type: "chat"  # Options: chat, embed, reranker, vision
-  max_tokens: 32
+  name: "BAAI/bge-reranker-v2-m3"
+  type: "reranker"  # Options: chat, embed, reranker, vision
+  max_tokens: 1024
   temperature: 0.2
 
 # Mock Data Configuration (used for generating benchmark requests)
