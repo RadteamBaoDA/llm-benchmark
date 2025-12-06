@@ -823,13 +823,19 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
         <div id="requests" class="tab-content">
             <div class="table-card" style="margin-bottom: 24px;">
                 <h3>💬 Request/Response Log</h3>
-                <p style="color: var(--text-muted); margin-bottom: 16px;">
+                <p style="color: var(--text-muted); margin-bottom: 12px;">
                     View the prompt sent to the LLM and the response received for each request.
                     {capture_status}
                 </p>
-                <div id="request-list" style="max-height: 600px; overflow-y: auto;">
+                <div class="request-search-bar" style="margin-bottom: 16px;">
+                    <input type="text" id="request-search" placeholder="🔍 Search by ID, prompt, or response..." 
+                           style="width: 100%; padding: 10px 14px; border: 1px solid var(--border-color); border-radius: 6px; font-size: 14px;" 
+                           oninput="filterRequests(this.value)">
+                </div>
+                <div id="request-list" style="max-height: 50vh; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 6px; padding: 8px;">
                     {request_response_content}
                 </div>
+                <div id="request-count" style="margin-top: 8px; font-size: 12px; color: var(--text-muted);"></div>
             </div>
         </div>
         
@@ -876,6 +882,55 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             const body = header.nextElementSibling;
             body.classList.toggle('expanded');
         }}
+        
+        // Filter requests by search query
+        function filterRequests(query) {{
+            const cards = document.querySelectorAll('.request-card');
+            const lowerQuery = query.toLowerCase().trim();
+            let visibleCount = 0;
+            let totalCount = cards.length;
+            
+            cards.forEach(card => {{
+                if (!lowerQuery) {{
+                    card.style.display = 'block';
+                    visibleCount++;
+                    return;
+                }}
+                
+                const requestId = card.querySelector('.request-id')?.textContent || '';
+                const prompt = card.querySelector('.request-section pre')?.textContent || '';
+                const response = card.querySelectorAll('.request-section pre')[1]?.textContent || '';
+                
+                const matches = requestId.toLowerCase().includes(lowerQuery) ||
+                               prompt.toLowerCase().includes(lowerQuery) ||
+                               response.toLowerCase().includes(lowerQuery);
+                
+                if (matches) {{
+                    card.style.display = 'block';
+                    visibleCount++;
+                }} else {{
+                    card.style.display = 'none';
+                }}
+            }});
+            
+            const countEl = document.getElementById('request-count');
+            if (countEl) {{
+                if (lowerQuery) {{
+                    countEl.textContent = `Showing ${{visibleCount}} of ${{totalCount}} requests`;
+                }} else {{
+                    countEl.textContent = `Total: ${{totalCount}} requests`;
+                }}
+            }}
+        }}
+        
+        // Initialize request count on page load
+        document.addEventListener('DOMContentLoaded', function() {{
+            const cards = document.querySelectorAll('.request-card');
+            const countEl = document.getElementById('request-count');
+            if (countEl && cards.length > 0) {{
+                countEl.textContent = `Total: ${{cards.length}} requests`;
+            }}
+        }});
         
         // Chart.js defaults
         Chart.defaults.font.family = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
@@ -1287,15 +1342,17 @@ SCENARIO_CARD_TEMPLATE = '''
 class HTMLReportGenerator:
     """Generates JMeter-style HTML reports from timeseries data."""
     
-    def __init__(self, output_dir: str = "reports"):
+    def __init__(self, output_dir: str = "reports", timeseries_dir: Optional[str] = None):
         """
         Initialize report generator.
         
         Args:
             output_dir: Directory to write HTML reports
+            timeseries_dir: Directory containing timeseries and capture files
         """
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.timeseries_dir = Path(timeseries_dir) if timeseries_dir else None
     
     def generate_scenario_report(self, reader: TimeseriesReader) -> str:
         """
@@ -1426,11 +1483,21 @@ class HTMLReportGenerator:
         }
         
         # Load captured request/response data
-        capture_file = self._find_capture_file(
-            stats.get("scenario_name", ""),
-            stats.get("model_name", ""),
-            self.output_dir.parent  # Look in the results directory (parent of reports)
-        )
+        # First try timeseries_dir (where capture files are saved)
+        capture_file = None
+        if self.timeseries_dir:
+            capture_file = self._find_capture_file(
+                stats.get("scenario_name", ""),
+                stats.get("model_name", ""),
+                self.timeseries_dir
+            )
+        # Also try the output directory parent (for legacy compatibility)
+        if not capture_file:
+            capture_file = self._find_capture_file(
+                stats.get("scenario_name", ""),
+                stats.get("model_name", ""),
+                self.output_dir.parent
+            )
         # Also try the output directory itself
         if not capture_file:
             capture_file = self._find_capture_file(
@@ -1530,13 +1597,23 @@ class HTMLReportGenerator:
             status_text = "Success" if success else "Failed"
             
             # Escape HTML in prompt and response
-            prompt_escaped = self._escape_html(prompt)
-            response_escaped = self._escape_html(response) if success else self._escape_html(error or "No response")
+            prompt_escaped = self._escape_html(prompt) or "(Empty prompt)"
+            if success:
+                response_escaped = self._escape_html(response) or "(Empty response)"
+            else:
+                response_escaped = self._escape_html(error or "No response")
+            
+            # Truncate prompt preview for header
+            prompt_preview = prompt[:50] + "..." if len(prompt) > 50 else prompt
+            prompt_preview_escaped = self._escape_html(prompt_preview)
             
             card = f'''
-            <div class="request-card">
+            <div class="request-card" data-request-id="{request_id}">
                 <div class="request-header" onclick="toggleRequest(this)">
-                    <span class="request-id">Request #{request_id}</span>
+                    <div style="display: flex; flex-direction: column; gap: 4px;">
+                        <span class="request-id">Request #{request_id}</span>
+                        <span style="font-size: 12px; color: var(--text-muted); max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{prompt_preview_escaped}</span>
+                    </div>
                     <div class="request-meta">
                         <span>⏱️ {latency_ms:.0f}ms</span>
                         <span>📝 {tokens} tokens</span>
@@ -1621,6 +1698,9 @@ class HTMLReportGenerator:
         Returns:
             Path to generated index HTML file
         """
+        # Store timeseries_dir for capture file lookup
+        self.timeseries_dir = Path(timeseries_dir)
+        
         readers = load_all_timeseries(timeseries_dir)
         
         if not readers:

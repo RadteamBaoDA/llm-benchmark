@@ -669,7 +669,8 @@ class BenchmarkEngine:
         """Create worker function for request execution."""
         engine = self
         request_timeout = scenario.timeout
-        use_streaming = self.config.api.streaming and self.config.model.type == "chat"
+        # Streaming is supported for chat and vision model types (both use chat completions API)
+        use_streaming = self.config.api.streaming and self.config.model.type in ("chat", "vision")
         
         async def worker(
             request_id: int, 
@@ -1250,15 +1251,22 @@ class BenchmarkEngine:
                     choices = response_body.get("choices", [])
                     if choices:
                         response_text = choices[0].get("message", {}).get("content", "")
+                        if not response_text:
+                            response_text = "(Empty response content)"
                     else:
                         response_text = json.dumps(response_body, indent=2)
             elif model_type == "embed":
                 data = response_body.get("data", [])
                 if data:
                     embedding = data[0].get("embedding", [])
-                    response_text = f"Embedding vector (dim={len(embedding)}): [{embedding[0]:.6f}, {embedding[1]:.6f}, ... , {embedding[-1]:.6f}]" if len(embedding) > 2 else str(embedding)
+                    if len(embedding) > 2:
+                        response_text = f"Embedding vector (dim={len(embedding)}): [{embedding[0]:.6f}, {embedding[1]:.6f}, ... , {embedding[-1]:.6f}]"
+                    elif embedding:
+                        response_text = f"Embedding vector (dim={len(embedding)}): {embedding}"
+                    else:
+                        response_text = "(Empty embedding response)"
                 else:
-                    response_text = json.dumps(response_body, indent=2)
+                    response_text = json.dumps(response_body, indent=2) if response_body else "(No embedding data)"
             elif model_type == "reranker":
                 results = response_body.get("results", [])
                 if results:
@@ -1266,8 +1274,10 @@ class BenchmarkEngine:
                         f"  {i+1}. Score: {r.get('relevance_score', r.get('score', 0)):.4f}"
                         for i, r in enumerate(results[:5])
                     ])
+                    if len(results) > 5:
+                        response_text += f"\n  ... and {len(results) - 5} more results"
                 else:
-                    response_text = json.dumps(response_body, indent=2)
+                    response_text = json.dumps(response_body, indent=2) if response_body else "(No reranker results)"
             elif model_type == "vision":
                 # Vision uses same format as chat
                 if "chunks" in response_body:
@@ -1285,6 +1295,8 @@ class BenchmarkEngine:
                     choices = response_body.get("choices", [])
                     if choices:
                         response_text = choices[0].get("message", {}).get("content", "")
+                        if not response_text:
+                            response_text = "(Empty response content)"
                     else:
                         response_text = json.dumps(response_body, indent=2)
             else:
