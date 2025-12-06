@@ -83,6 +83,9 @@ class BenchmarkEngine:
         self.debug_console = debug_console
         self._setup_debug_logging()
         
+        # HTTP request/response logging
+        self._setup_http_logging()
+        
         # Concurrent request tracking
         self._active_requests: int = 0
         self._active_lock = asyncio.Lock()
@@ -100,6 +103,92 @@ class BenchmarkEngine:
             self.timeseries_writer = TimeseriesWriter(
                 output_dir=config.output_dir,
                 format="csv"
+            )
+    
+    def _setup_http_logging(self):
+        """Configure HTTP request/response logging based on config."""
+        self._http_logger = logging.getLogger("llm_benchmark.http")
+        
+        # Get log level from config
+        log_level_str = self.config.logging.level.upper()
+        log_level = getattr(logging, log_level_str, logging.INFO)
+        self._http_logger.setLevel(log_level)
+        
+        # Remove existing handlers
+        self._http_logger.handlers = []
+        
+        # Create formatter
+        formatter = logging.Formatter(
+            '%(asctime)s [%(levelname)s] %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
+        )
+        
+        # Add file handler if configured
+        if self.config.logging.log_file:
+            file_handler = logging.FileHandler(self.config.logging.log_file)
+            file_handler.setFormatter(formatter)
+            self._http_logger.addHandler(file_handler)
+        
+        # Add console handler if DEBUG level or no file handler
+        if log_level == logging.DEBUG or not self.config.logging.log_file:
+            console_handler = logging.StreamHandler()
+            console_handler.setFormatter(formatter)
+            self._http_logger.addHandler(console_handler)
+        
+        # Prevent propagation to root logger
+        self._http_logger.propagate = False
+        
+        # Log config settings at startup
+        if self.config.logging.log_requests or self.config.logging.log_responses:
+            self._http_logger.info(f"HTTP logging enabled - Level: {log_level_str}, "
+                                   f"Requests: {self.config.logging.log_requests}, "
+                                   f"Responses: {self.config.logging.log_responses}")
+    
+    def _truncate(self, text: str, max_length: int) -> str:
+        """Truncate text to max length with ellipsis."""
+        if len(text) <= max_length:
+            return text
+        return text[:max_length] + "... (truncated)"
+    
+    def _log_request(self, request_id: int, url: str, headers: dict, payload: dict):
+        """Log HTTP request details."""
+        if not self.config.logging.log_requests:
+            return
+        
+        # Mask authorization header
+        safe_headers = headers.copy()
+        if 'Authorization' in safe_headers:
+            safe_headers['Authorization'] = 'Bearer ***'
+        
+        payload_str = json.dumps(payload, ensure_ascii=False)
+        truncated_payload = self._truncate(payload_str, self.config.logging.max_payload_length)
+        
+        self._http_logger.debug(
+            f"REQ #{request_id} -> {url}\n"
+            f"  Headers: {safe_headers}\n"
+            f"  Payload: {truncated_payload}"
+        )
+    
+    def _log_response(self, request_id: int, status_code: int, latency: float, 
+                      response_body: Optional[str] = None, error: Optional[str] = None):
+        """Log HTTP response details."""
+        if not self.config.logging.log_responses:
+            return
+        
+        if error:
+            self._http_logger.error(
+                f"REQ #{request_id} <- ERROR ({latency*1000:.1f}ms): {error}"
+            )
+        else:
+            body_preview = ""
+            if response_body:
+                truncated_body = self._truncate(response_body, self.config.logging.max_response_length)
+                body_preview = f"\n  Body: {truncated_body}"
+            
+            log_level = logging.DEBUG if status_code < 400 else logging.WARNING
+            self._http_logger.log(
+                log_level,
+                f"REQ #{request_id} <- {status_code} ({latency*1000:.1f}ms){body_preview}"
             )
     
     def _setup_debug_logging(self):
@@ -155,6 +244,10 @@ class BenchmarkEngine:
             headers["Authorization"] = f"Bearer {self.config.api.api_key}"
         
         request_timeout = timeout if timeout is not None else self.config.api.timeout
+        req_id = request_id if request_id is not None else 0
+        
+        # Log request
+        self._log_request(req_id, url, headers, mock_request.payload)
         
         if request_id is not None and request_id in self._request_submit_times:
             self._request_start_times[request_id] = time.perf_counter()
@@ -171,9 +264,17 @@ class BenchmarkEngine:
             )
             latency = time.perf_counter() - t0
             http_status = response.status_code
+            
+            # Read response body once
+            response_text = response.text
+            
+            # Log response
+            self._log_response(req_id, http_status, latency, response_text)
+            
             response.raise_for_status()
             
-            data = response.json()
+            # Parse JSON from the already-read text
+            data = json.loads(response_text)
             tokens, prompt_tokens, completion_tokens = self._extract_tokens(data)
             
             return (latency, tokens, prompt_tokens, completion_tokens, 
@@ -182,14 +283,28 @@ class BenchmarkEngine:
         except httpx.HTTPStatusError as e:
             latency = time.perf_counter() - t0
             http_status = e.response.status_code
-            error_msg = f"HTTP {http_status}"
             
-            if http_status == 429:
+            # Try to get error details from response body
+            try:
+                error_body = e.response.text
+                error_json = e.response.json()
+                error_detail = error_json.get('error', {}).get('message', '') or error_json.get('detail', '')
+            except Exception:
+                error_body = str(e)
+                error_detail = ''
+            
+            error_msg = f"HTTP {http_status}"
+            if error_detail:
+                error_msg = f"HTTP {http_status}: {error_detail}"
+            elif http_status == 429:
                 error_msg = "HTTP 429: Rate Limited / Queue Full"
-                if self.queue_metrics:
-                    self.queue_metrics.record_rejection()
             elif http_status == 503:
                 error_msg = "HTTP 503: Service Unavailable / Server Overloaded"
+            
+            # Log error response
+            self._log_response(req_id, http_status, latency, error_body, error_msg)
+            
+            if http_status == 429 or http_status == 503:
                 if self.queue_metrics:
                     self.queue_metrics.record_rejection()
             
@@ -197,13 +312,23 @@ class BenchmarkEngine:
             
         except httpx.TimeoutException:
             latency = time.perf_counter() - t0
+            error_msg = f"Timeout after {request_timeout}s"
+            self._log_response(req_id, 0, latency, error=error_msg)
             if self.queue_metrics:
                 self.queue_metrics.record_timeout()
-            return latency, None, None, None, None, f"Timeout after {request_timeout}s", None
+            return latency, None, None, None, None, error_msg, None
+            
+        except httpx.ConnectError as e:
+            latency = time.perf_counter() - t0
+            error_msg = f"Connection error: {str(e)}"
+            self._log_response(req_id, 0, latency, error=error_msg)
+            return latency, None, None, None, None, error_msg, None
             
         except Exception as e:
             latency = time.perf_counter() - t0
-            return latency, None, None, None, None, str(e), None
+            error_msg = f"{type(e).__name__}: {str(e)}"
+            self._log_response(req_id, 0, latency, error=error_msg)
+            return latency, None, None, None, None, error_msg, None
     
     def _extract_tokens(self, data: Dict[str, Any]) -> Tuple[int, int, int]:
         """Extract token counts from API response."""
@@ -436,8 +561,7 @@ class BenchmarkEngine:
                         tokens=tokens if tokens else 0,
                         prompt_tokens=prompt_tokens if prompt_tokens else 0,
                         completion_tokens=completion_tokens if completion_tokens else 0,
-                        concurrent_requests=remaining_concurrent,
-                        queue_time=wait_time
+                        concurrent_requests=remaining_concurrent
                     )
                 
                 engine.metrics_collector.add_request_metric(
@@ -453,6 +577,22 @@ class BenchmarkEngine:
                 
                 if pbar:
                     pbar.update(1)
+                    
+            except Exception as worker_error:
+                # Log any exception in worker
+                engine._http_logger.error(f"REQ #{request_id} WORKER ERROR: {type(worker_error).__name__}: {worker_error}")
+                # Still record as failed request
+                engine.metrics_collector.add_request_metric(
+                    benchmark=benchmark,
+                    latency=0,
+                    tokens=0,
+                    success=False,
+                    error=f"Worker error: {worker_error}"
+                )
+                await engine._decrement_active()
+                if pbar:
+                    pbar.update(1)
+                raise
                     
             finally:
                 if sem:

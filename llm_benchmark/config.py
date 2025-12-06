@@ -71,6 +71,17 @@ class MockDataConfig:
 
 
 @dataclass
+class LoggingConfig:
+    """Logging configuration settings."""
+    level: str = "INFO"  # DEBUG, INFO, WARNING, ERROR
+    log_requests: bool = False  # Log HTTP request details (URL, headers, payload)
+    log_responses: bool = False  # Log HTTP response details (status, body)
+    log_file: Optional[str] = None  # Log file path (None = console only)
+    max_payload_length: int = 500  # Truncate payload in logs
+    max_response_length: int = 500  # Truncate response body in logs
+
+
+@dataclass
 class ScenarioConfig:
     """
     Benchmark scenario configuration.
@@ -147,6 +158,7 @@ class BenchmarkConfig:
     api: APIConfig
     model: ModelConfig
     mock_data: MockDataConfig = field(default_factory=MockDataConfig)
+    logging: LoggingConfig = field(default_factory=LoggingConfig)
     scenarios: List[ScenarioConfig] = field(default_factory=list)
     scenario_file: str = "scenario.yml"
     scenario_defaults: ScenarioDefaults = field(default_factory=ScenarioDefaults)
@@ -276,6 +288,17 @@ def parse_config(raw_config: Dict[str, Any], config_dir: Optional[Path] = None) 
         vision_image_paths=mock_raw.get('vision_image_paths', [])
     )
     
+    # Parse Logging config
+    logging_raw = raw_config.get('logging', {})
+    logging_config = LoggingConfig(
+        level=logging_raw.get('level', 'INFO'),
+        log_requests=logging_raw.get('log_requests', False),
+        log_responses=logging_raw.get('log_responses', False),
+        log_file=logging_raw.get('log_file', None),
+        max_payload_length=logging_raw.get('max_payload_length', 500),
+        max_response_length=logging_raw.get('max_response_length', 500)
+    )
+    
     # Parse Scenarios - from separate file or inline
     scenario_file = raw_config.get('scenario_file', 'scenario.yml')
     scenario_defaults = ScenarioDefaults()
@@ -307,6 +330,7 @@ def parse_config(raw_config: Dict[str, Any], config_dir: Optional[Path] = None) 
         api=api_config,
         model=model_config,
         mock_data=mock_config,
+        logging=logging_config,
         scenarios=scenarios,
         scenario_file=scenario_file,
         scenario_defaults=scenario_defaults,
@@ -375,6 +399,16 @@ mock_data:
   #   - "./images/image1.jpg"
   #   - "./images/image2.png"
   #   - "./images/image3.webp"
+
+# Logging Configuration
+# Enable debug logging to diagnose request failures
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  log_requests: false  # Log HTTP request details (URL, headers, payload)
+  log_responses: false  # Log HTTP response details (status, body)
+  log_file: null  # Log file path (null = console only, e.g., "benchmark.log")
+  max_payload_length: 500  # Truncate payload in logs (characters)
+  max_response_length: 500  # Truncate response body in logs (characters)
 
 # Scenario Configuration
 # Scenarios are defined in a separate file for better organization

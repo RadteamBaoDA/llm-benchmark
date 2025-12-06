@@ -28,6 +28,15 @@ mock_data:
     - "./images/image1.jpg"
     - "./images/image2.png"
 
+# Logging Configuration - Enable debug logging to diagnose request failures
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  log_requests: false  # Log HTTP request details (URL, headers, payload)
+  log_responses: false  # Log HTTP response details (status, body)
+  log_file: null  # Log file path (null = console only)
+  max_payload_length: 500  # Truncate payload in logs
+  max_response_length: 500  # Truncate response body in logs
+
 # Reference to scenarios file
 scenario_file: "scenario.yml"
 
@@ -41,6 +50,39 @@ benchmark:
     - "markdown"
     - "csv"
 ```
+
+## Logging Configuration
+
+The logging section allows you to enable detailed HTTP request/response logging to diagnose issues:
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| `level` | Log level: DEBUG, INFO, WARNING, ERROR | `INFO` |
+| `log_requests` | Log HTTP request details (URL, headers, payload) | `false` |
+| `log_responses` | Log HTTP response details (status code, body) | `false` |
+| `log_file` | Path to log file (null = console only) | `null` |
+| `max_payload_length` | Maximum characters for payload in logs | `500` |
+| `max_response_length` | Maximum characters for response body in logs | `500` |
+
+### Debugging Failed Requests
+
+To diagnose why requests are failing, enable debug logging:
+
+```yaml
+logging:
+  level: "DEBUG"
+  log_requests: true
+  log_responses: true
+  log_file: "benchmark.log"  # Optional: save to file
+```
+
+This will show:
+- Full request URL and endpoint
+- Request headers (API key masked)
+- Request payload
+- Response status code
+- Response body (with error details)
+- Error messages and exception details
 
 ## scenario.yml - Benchmark Scenarios
 

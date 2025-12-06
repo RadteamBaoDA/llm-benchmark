@@ -20,7 +20,8 @@ from llm_benchmark.config import (
     ScenarioConfig,
     APIConfig,
     ModelConfig,
-    MockDataConfig
+    MockDataConfig,
+    LoggingConfig
 )
 from llm_benchmark.engine import BenchmarkEngine, run_benchmark
 from llm_benchmark.exporters import export_results
@@ -241,6 +242,7 @@ def create_minimal_config(args: argparse.Namespace) -> BenchmarkConfig:
             temperature=args.temperature if args.temperature is not None else 0.2
         ),
         mock_data=MockDataConfig(),
+        logging=LoggingConfig(),
         scenarios=[],
         default_requests=args.requests or 100,
         default_concurrency=args.concurrency or 10,

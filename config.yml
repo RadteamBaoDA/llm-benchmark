@@ -32,13 +32,22 @@ mock_data:
     - "Deep learning models require large amounts of data."
   
   # Reranker configuration
-  reranker_query: "What is machine learning?"
   reranker_documents:
     - "Machine learning is a type of artificial intelligence that allows computers to learn from data."
     - "The weather today is sunny with a high of 75 degrees."
     - "Python is commonly used for machine learning applications."
     - "Machine learning algorithms can identify patterns in large datasets."
     - "Coffee is one of the most popular beverages in the world."
+    - "Deep learning models use neural networks with many layers."
+    - "Data preprocessing and cleaning improve model quality."
+    - "Feature engineering can significantly improve model performance."
+    - "Supervised learning relies on labeled datasets for training."
+    - "Unsupervised learning techniques discover hidden structures."
+    - "Overfitting occurs when a model learns noise instead of signal."
+    - "Gradient descent is a common optimization algorithm for training models."
+    - "Decision trees provide interpretable predictions and rules."
+    - "Reinforcement learning trains agents through rewards and penalties."
+    - "Data scientists often use Python, R, and SQL to analyze data."
   
   # Vision model configuration
   vision_prompts:
@@ -52,6 +61,16 @@ mock_data:
   #   - "./images/image1.jpg"
   #   - "./images/image2.png"
   #   - "./images/image3.webp"
+
+# Logging Configuration
+# Enable debug logging to diagnose request failures
+logging:
+  level: "DEBUG"  # DEBUG, INFO, WARNING, ERROR
+  log_requests: true  # Log HTTP request details (URL, headers, payload)
+  log_responses: true  # Log HTTP response details (status, body)
+  log_file: null  # Log file path (null = console only, e.g., "benchmark.log")
+  max_payload_length: 500  # Truncate payload in logs (characters)
+  max_response_length: 500  # Truncate response body in logs (characters)
 
 # Scenario Configuration
 # Scenarios are defined in a separate file for better organization
