@@ -15,12 +15,17 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 
-try:
-    from tqdm.asyncio import tqdm_asyncio
-    TQDM_AVAILABLE = True
-except ImportError:
-    tqdm_asyncio = None
-    TQDM_AVAILABLE = False
+from rich.console import Console
+from rich.live import Live
+from rich.panel import Panel
+from rich.progress import (
+    BarColumn,
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+    TimeRemainingColumn,
+)
+from rich.table import Table
 
 from .config import BenchmarkConfig, ScenarioConfig
 from .metrics import BenchmarkMetrics, MetricsCollector, RequestMetrics
@@ -90,6 +95,9 @@ class BenchmarkEngine:
         self._active_requests: int = 0
         self._active_lock = asyncio.Lock()
         self._peak_concurrent: int = 0
+        
+        # Rich Console
+        self.console = Console()
         
         # Queue metrics
         self.queue_metrics: Optional[QueueMetrics] = None
@@ -387,9 +395,18 @@ class BenchmarkEngine:
         
         # Create progress bar
         pbar = self._create_progress_bar(mock_requests, scenario.name, quiet)
+        task_id = None
+        if pbar:
+            task_id = pbar.add_task(
+                f"  {scenario.name}", 
+                total=len(mock_requests), 
+                active=0, 
+                errors=0
+            )
+            pbar.start()
         
         # Create worker function
-        worker = self._create_worker(scenario, benchmark, pbar)
+        worker = self._create_worker(scenario, benchmark, pbar, task_id)
         
         # Execute benchmark
         async with self._create_http_client(scenario.concurrency) as self.client:
@@ -400,12 +417,13 @@ class BenchmarkEngine:
             if self.debug:
                 self._debug_logger.mode_phase("EXECUTION", f"Starting {mode.value} mode")
             
-            await self._execute_mode(mode, mock_requests, scenario, worker)
+            try:
+                await self._execute_mode(mode, mock_requests, scenario, worker)
+            finally:
+                if pbar:
+                    pbar.stop()
             
             duration = time.perf_counter() - self._benchmark_start_time
-        
-        if pbar:
-            pbar.close()
         
         # Finalize
         self._finalize_scenario(benchmark, duration, scenario)
@@ -413,15 +431,23 @@ class BenchmarkEngine:
         return benchmark
     
     def _print_scenario_header(self, scenario: ScenarioConfig, mode: BenchmarkMode):
-        """Print scenario header information."""
-        print(f"\n🚀 Running scenario: {scenario.name}")
-        if scenario.description:
-            print(f"   Description: {scenario.description}")
-        print(f"   Requests: {scenario.requests}, Concurrency: {scenario.concurrency}")
-        print(f"   Warmup: {scenario.warmup_requests}, Timeout: {scenario.timeout}s")
-        print(f"   Mode: {mode.value}")
+        """Print scenario header information using Rich Panel."""
+        info = [
+            f"[bold]Description:[/bold] {scenario.description}" if scenario.description else "",
+            f"[bold]Requests:[/bold] {scenario.requests}, [bold]Concurrency:[/bold] {scenario.concurrency}",
+            f"[bold]Warmup:[/bold] {scenario.warmup_requests}, [bold]Timeout:[/bold] {scenario.timeout}s",
+            f"[bold]Mode:[/bold] {mode.value}"
+        ]
         if self.debug:
-            print(f"   🐛 Debug logging: ENABLED")
+            info.append("[bold yellow]🐛 Debug logging: ENABLED[/bold yellow]")
+            
+        content = "\n".join(filter(None, info))
+        self.console.print(Panel(
+            content,
+            title=f"🚀 Running scenario: [bold cyan]{scenario.name}[/bold cyan]",
+            border_style="blue",
+            expand=False
+        ))
     
     def _init_scenario_state(self):
         """Initialize state for a new scenario run."""
@@ -463,10 +489,19 @@ class BenchmarkEngine:
         return None
     
     def _create_progress_bar(self, mock_requests: List[MockRequest], name: str, quiet: bool):
-        """Create a progress bar if available and not quiet."""
-        if TQDM_AVAILABLE and not quiet:
-            from tqdm import tqdm
-            return tqdm(total=len(mock_requests), desc=f"  {name}")
+        """Create a progress bar if not quiet."""
+        if not quiet:
+            return Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+                TimeRemainingColumn(),
+                TextColumn("[cyan]Active: {task.fields[active]}"),
+                TextColumn("[red]Errors: {task.fields[errors]}"),
+                refresh_per_second=10,
+                console=self.console
+            )
         return None
     
     def _create_http_client(self, concurrency: int):
@@ -482,7 +517,8 @@ class BenchmarkEngine:
         self, 
         scenario: ScenarioConfig, 
         benchmark: BenchmarkMetrics,
-        pbar
+        pbar,
+        task_id=None
     ):
         """Create worker function for request execution."""
         engine = self
@@ -526,6 +562,10 @@ class BenchmarkEngine:
                     if wait_time > 0.01:
                         engine._debug_logger.queue_sample(current_concurrent, wait_time * 1000)
                 
+                # Update progress bar with active count
+                if pbar and task_id is not None:
+                     pbar.update(task_id, active=current_concurrent)
+
                 result = await engine._make_request(
                     mock_request,
                     capture_response=engine.config.capture_responses,
@@ -575,8 +615,13 @@ class BenchmarkEngine:
                     response=response
                 )
                 
-                if pbar:
-                    pbar.update(1)
+                if pbar and task_id is not None:
+                    pbar.update(
+                        task_id, 
+                        advance=1, 
+                        active=remaining_concurrent,
+                        errors=benchmark.failed_requests
+                    )
                     
             except Exception as worker_error:
                 # Log any exception in worker
@@ -590,9 +635,11 @@ class BenchmarkEngine:
                     error=f"Worker error: {worker_error}"
                 )
                 await engine._decrement_active()
-                if pbar:
-                    pbar.update(1)
+                if pbar and task_id is not None:
+                    pbar.update(task_id, advance=1, errors=benchmark.failed_requests)
                 raise
+                    
+
                     
             finally:
                 if sem:
@@ -782,22 +829,49 @@ class BenchmarkEngine:
     # =========================================================================
     
     def _print_results(self, metrics: BenchmarkMetrics) -> None:
-        """Print benchmark results to console."""
-        print(f"\n{'='*60}")
-        print(f"📊 Results for: {metrics.scenario_name}")
-        print(f"{'='*60}")
+        """Print benchmark results to console using Rich Table."""
         
-        print(f"\n✅ {metrics.successful_requests}/{metrics.total_requests} "
-              f"requests succeeded in {metrics.duration:.2f}s")
-        
+        # Summary Panel
+        summary = (
+            f"✅ [green]{metrics.successful_requests}/{metrics.total_requests}[/green] requests succeeded\n"
+            f"⏱️  Duration: [bold]{metrics.duration:.2f}s[/bold]"
+        )
         if metrics.failed_requests > 0:
-            print(f"❌ {metrics.failed_requests} requests failed")
+            summary += f"\n❌ [red]{metrics.failed_requests} requests failed[/red]"
+            
+        self.console.print(Panel(
+            summary,
+            title=f"📊 Results for: [bold]{metrics.scenario_name}[/bold]",
+            border_style="green" if metrics.failed_requests == 0 else "yellow"
+        ))
         
         if metrics.successful_requests == 0:
-            print("⚠️  No successful requests to analyze")
+            self.console.print("[bold red]⚠️  No successful requests to analyze[/bold red]")
             return
+
+        # Metrics Table
+        table = Table(title="📈 Throughput & Latency", show_header=True, header_style="bold magenta")
+        table.add_column("Metric", style="cyan")
+        table.add_column("Value", justify="right")
         
-        print(f"\n📈 Throughput:")
+        table.add_row("Requests/sec", f"{metrics.requests_per_sec:.2f}")
+        if metrics.avg_latency:
+            table.add_row("Avg Latency", f"{metrics.avg_latency * 1000:.2f} ms")
+        if metrics.p50_latency:
+            table.add_row("P50 Latency", f"{metrics.p50_latency * 1000:.2f} ms")
+        if metrics.p90_latency:
+            table.add_row("P90 Latency", f"{metrics.p90_latency * 1000:.2f} ms")
+        if metrics.p95_latency:
+            table.add_row("P95 Latency", f"{metrics.p95_latency * 1000:.2f} ms")
+        if metrics.p99_latency:
+            table.add_row("P99 Latency", f"{metrics.p99_latency * 1000:.2f} ms")
+        
+        if metrics.total_tokens > 0:
+            table.add_section()
+            table.add_row("Total Tokens", f"{metrics.total_tokens:,}")
+            table.add_row("Tokens/sec", f"{metrics.tokens_per_sec:.2f}")
+            
+        self.console.print(table)
         print(f"   Requests/s:     {metrics.requests_per_sec:>10.2f}")
         if metrics.tokens_per_sec:
             print(f"   Tokens/s:       {metrics.tokens_per_sec:>10.2f}")

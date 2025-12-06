@@ -8,7 +8,7 @@ api:
 
 # Model Configuration
 model:
-  name: "BAAI/bge-reranker-v2-m3"
+  name: "Qwen/Qwen3-Reranker-0.6B"
   type: "reranker"  # Options: chat, embed, reranker, vision
   max_tokens: 1024
   temperature: 0.2
@@ -65,7 +65,7 @@ mock_data:
 # Logging Configuration
 # Enable debug logging to diagnose request failures
 logging:
-  level: "DEBUG"  # DEBUG, INFO, WARNING, ERROR
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR
   log_requests: true  # Log HTTP request details (URL, headers, payload)
   log_responses: true  # Log HTTP response details (status, body)
   log_file: null  # Log file path (null = console only, e.g., "benchmark.log")

@@ -21,6 +21,8 @@ from typing import Any, Dict, List, Optional, Union
 
 import structlog
 from structlog.typing import FilteringBoundLogger
+from rich.console import Console
+from rich.logging import RichHandler
 
 
 # =============================================================================
@@ -117,10 +119,9 @@ def configure_structlog(
     if json_format:
         renderer = structlog.processors.JSONRenderer()
     else:
-        renderer = structlog.dev.ConsoleRenderer(
-            colors=colors and console_output,
-            exception_formatter=structlog.dev.plain_traceback,
-        )
+        # For RichHandler, we don't need a colored console renderer in the processor chain
+        # because Rich handles the rendering. We just need to prep it for stdlib logging.
+        renderer = structlog.dev.ConsoleRenderer(colors=False)
     
     # Create formatter
     formatter = structlog.stdlib.ProcessorFormatter(
@@ -149,7 +150,20 @@ def configure_structlog(
         handlers.append(file_handler)
     
     if console_output:
-        console_handler = logging.StreamHandler(sys.stdout)
+        # Use RichHandler for console output
+        # We need to ensure we don't have double timestamp/level since Rich does it
+        console_handler = RichHandler(
+            console=Console(force_terminal=True, color_system="truecolor"),
+            show_time=True,
+            show_level=True,
+            show_path=False,
+            rich_tracebacks=True,
+            markup=True
+        )
+        # Note: RichHandler formats the message itself, but we still need to pass 
+        # the structlog-processed dict as the message.
+        # However, RichHandler expects a string message. 
+        # structlog.stdlib.ProcessorFormatter will render it to a string.
         console_handler.setFormatter(formatter)
         console_handler.setLevel(level)
         handlers.append(console_handler)
