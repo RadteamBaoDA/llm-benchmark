@@ -107,6 +107,10 @@ class BenchmarkEngine:
         self._request_start_times: Dict[int, float] = {}
         self._benchmark_start_time: float = 0.0
         
+        # Request/Response capture for HTML report
+        self._capture_data: List[Dict[str, Any]] = []
+        self._capture_file: Optional[str] = None
+        
         if enable_timeseries:
             self.timeseries_writer = TimeseriesWriter(
                 output_dir=config.output_dir,
@@ -245,7 +249,8 @@ class BenchmarkEngine:
             Tuple of (latency, total_tokens, prompt_tokens, completion_tokens, 
                      response, error, http_status)
         """
-        url = f"{self.config.api.base_url.rstrip('/')}{mock_request.endpoint}"
+        prefix = self.config.api.endpoint_prefix.rstrip('/')
+        url = f"{self.config.api.base_url.rstrip('/')}{prefix}{mock_request.endpoint}"
         headers = {"Content-Type": "application/json"}
         
         if self.config.api.api_key:
@@ -346,6 +351,138 @@ class BenchmarkEngine:
         total_tokens = usage.get("total_tokens", prompt_tokens + completion_tokens)
         return total_tokens, prompt_tokens, completion_tokens
     
+    async def _make_streaming_request(
+        self,
+        mock_request: MockRequest,
+        capture_response: bool = False,
+        timeout: Optional[int] = None,
+        request_id: Optional[int] = None
+    ) -> Tuple[Optional[float], Optional[int], Optional[int], Optional[int],
+               Optional[Dict[str, Any]], Optional[str], Optional[int],
+               Optional[float], Optional[float], Optional[float]]:
+        """
+        Make a streaming API request and capture TTFT and ITL metrics.
+        
+        Returns:
+            Tuple of (latency, total_tokens, prompt_tokens, completion_tokens,
+                     response, error, http_status, ttft_ms, tpot_ms, itl_avg_ms)
+        """
+        prefix = self.config.api.endpoint_prefix.rstrip('/')
+        url = f"{self.config.api.base_url.rstrip('/')}{prefix}{mock_request.endpoint}"
+        headers = {"Content-Type": "application/json"}
+        
+        if self.config.api.api_key:
+            headers["Authorization"] = f"Bearer {self.config.api.api_key}"
+        
+        request_timeout = timeout if timeout is not None else self.config.api.timeout
+        req_id = request_id if request_id is not None else 0
+        
+        # Enable streaming in payload
+        payload = mock_request.payload.copy()
+        payload["stream"] = True
+        
+        self._log_request(req_id, url, headers, payload)
+        
+        t0 = time.perf_counter()
+        ttft = None
+        token_times = []
+        http_status = None
+        chunks = []
+        completion_tokens = 0
+        
+        try:
+            async with self.client.stream(
+                "POST",
+                url,
+                headers=headers,
+                json=payload,
+                timeout=request_timeout
+            ) as response:
+                http_status = response.status_code
+                response.raise_for_status()
+                
+                async for line in response.aiter_lines():
+                    if not line or not line.startswith("data: "):
+                        continue
+                    
+                    data_str = line[6:]  # Remove "data: " prefix
+                    if data_str.strip() == "[DONE]":
+                        break
+                    
+                    try:
+                        chunk = json.loads(data_str)
+                        chunks.append(chunk)
+                        
+                        # Record time of each token
+                        current_time = time.perf_counter()
+                        
+                        # First token - TTFT
+                        if ttft is None:
+                            ttft = (current_time - t0) * 1000  # Convert to ms
+                        
+                        # Record time for ITL calculation
+                        token_times.append(current_time)
+                        
+                        # Count tokens from streaming response
+                        if "choices" in chunk and chunk["choices"]:
+                            delta = chunk["choices"][0].get("delta", {})
+                            if delta.get("content"):
+                                completion_tokens += 1
+                    except json.JSONDecodeError:
+                        continue
+                
+                latency = time.perf_counter() - t0
+        
+        except httpx.HTTPStatusError as e:
+            latency = time.perf_counter() - t0
+            http_status = e.response.status_code
+            error_msg = f"HTTP {http_status}"
+            self._log_response(req_id, http_status, latency, error=error_msg)
+            return latency, None, None, None, None, error_msg, http_status, None, None, None
+        
+        except httpx.TimeoutException:
+            latency = time.perf_counter() - t0
+            error_msg = f"Timeout after {request_timeout}s"
+            self._log_response(req_id, 0, latency, error=error_msg)
+            return latency, None, None, None, None, error_msg, None, None, None, None
+        
+        except Exception as e:
+            latency = time.perf_counter() - t0
+            error_msg = f"{type(e).__name__}: {str(e)}"
+            self._log_response(req_id, 0, latency, error=error_msg)
+            return latency, None, None, None, None, error_msg, None, None, None, None
+        
+        # Calculate metrics
+        latency_ms = latency * 1000
+        
+        # Calculate TPOT: (E2EL - TTFT) / (completion_tokens - 1)
+        tpot = None
+        if ttft is not None and completion_tokens > 1:
+            tpot = (latency_ms - ttft) / (completion_tokens - 1)
+        
+        # Calculate average ITL from token times
+        itl_avg = None
+        if len(token_times) > 1:
+            itls = [(token_times[i] - token_times[i-1]) * 1000 
+                    for i in range(1, len(token_times))]
+            itl_avg = sum(itls) / len(itls)
+        
+        # Try to get prompt tokens from final chunk usage
+        prompt_tokens = 0
+        total_tokens = completion_tokens
+        if chunks:
+            last_chunk = chunks[-1]
+            if "usage" in last_chunk:
+                prompt_tokens = last_chunk["usage"].get("prompt_tokens", 0)
+                total_tokens = last_chunk["usage"].get("total_tokens", completion_tokens)
+        
+        self._log_response(req_id, http_status, latency, f"Streaming: {completion_tokens} tokens")
+        
+        response_data = {"chunks": chunks} if capture_response else None
+        
+        return (latency, total_tokens, prompt_tokens, completion_tokens,
+                response_data, None, http_status, ttft, tpot, itl_avg)
+
     # =========================================================================
     # Load Profile
     # =========================================================================
@@ -379,6 +516,9 @@ class BenchmarkEngine:
         
         # Setup timeseries
         timeseries_file = self._setup_timeseries(scenario)
+        
+        # Setup request/response capture
+        self._setup_capture(scenario)
         
         # Create benchmark metrics
         benchmark = self.metrics_collector.create_benchmark(
@@ -488,6 +628,12 @@ class BenchmarkEngine:
             return timeseries_file
         return None
     
+    def _setup_capture(self, scenario: ScenarioConfig) -> None:
+        """Setup request/response capture for the scenario."""
+        if self.config.capture_request_response:
+            self.start_capture(scenario.name, self.config.model.name)
+            print(f"   💬 Capture: Enabled (request/response logging)")
+    
     def _create_progress_bar(self, mock_requests: List[MockRequest], name: str, quiet: bool):
         """Create a progress bar if not quiet."""
         if not quiet:
@@ -523,6 +669,7 @@ class BenchmarkEngine:
         """Create worker function for request execution."""
         engine = self
         request_timeout = scenario.timeout
+        use_streaming = self.config.api.streaming and self.config.model.type == "chat"
         
         async def worker(
             request_id: int, 
@@ -566,13 +713,37 @@ class BenchmarkEngine:
                 if pbar and task_id is not None:
                      pbar.update(task_id, active=current_concurrent)
 
-                result = await engine._make_request(
-                    mock_request,
-                    capture_response=engine.config.capture_responses,
-                    timeout=request_timeout,
-                    request_id=request_id
-                )
-                latency, tokens, prompt_tokens, completion_tokens, response, error, http_status = result
+                # Use streaming or non-streaming based on config
+                ttft_ms = None
+                tpot_ms = None
+                itl_ms = None
+                streaming = False
+                
+                # Capture response if capture_request_response is enabled
+                should_capture = engine.config.capture_request_response
+                
+                if use_streaming:
+                    result = await engine._make_streaming_request(
+                        mock_request,
+                        capture_response=should_capture,
+                        timeout=request_timeout,
+                        request_id=request_id
+                    )
+                    latency, tokens, prompt_tokens, completion_tokens, response, error, http_status, ttft_ms, tpot_ms, itl_ms = result
+                    streaming = True
+                else:
+                    result = await engine._make_request(
+                        mock_request,
+                        capture_response=should_capture,
+                        timeout=request_timeout,
+                        request_id=request_id
+                    )
+                    latency, tokens, prompt_tokens, completion_tokens, response, error, http_status = result
+                    # For non-streaming requests:
+                    # - TTFT is not measurable (all tokens arrive at once) - keep as None
+                    # - TPOT can be estimated as total_latency / completion_tokens
+                    if error is None and latency and completion_tokens and completion_tokens > 0:
+                        tpot_ms = (latency * 1000) / completion_tokens  # Estimated TPOT
                 
                 remaining_concurrent = await engine._decrement_active()
                 
@@ -601,7 +772,24 @@ class BenchmarkEngine:
                         tokens=tokens if tokens else 0,
                         prompt_tokens=prompt_tokens if prompt_tokens else 0,
                         completion_tokens=completion_tokens if completion_tokens else 0,
-                        concurrent_requests=remaining_concurrent
+                        concurrent_requests=remaining_concurrent,
+                        ttft_ms=ttft_ms,
+                        tpot_ms=tpot_ms,
+                        itl_ms=itl_ms,
+                        streaming=streaming
+                    )
+                
+                # Capture request/response for HTML report viewing
+                if engine.config.capture_request_response:
+                    engine.capture_request_response(
+                        request_id=request_id,
+                        prompt=mock_request.payload,
+                        response_body=response,
+                        latency_ms=(latency or 0) * 1000,
+                        success=error is None,
+                        error=error,
+                        tokens=tokens or 0,
+                        model_type=engine.config.model.type
                     )
                 
                 engine.metrics_collector.add_request_metric(
@@ -757,6 +945,10 @@ class BenchmarkEngine:
         
         if self.timeseries_writer:
             self.timeseries_writer.end_scenario()
+        
+        # Save captured request/response data
+        if self.config.capture_request_response:
+            self.save_capture()
         
         if self.debug:
             stats = {
@@ -951,6 +1143,186 @@ class BenchmarkEngine:
         
         print(f"💾 Responses saved to: {filepath}")
         return str(filepath)
+    
+    def start_capture(self, scenario_name: str, model_name: str) -> None:
+        """Start capturing request/response data for a scenario."""
+        if not self.config.capture_request_response:
+            return
+        
+        self._capture_data = []
+        
+        output_dir = Path(self.config.output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        safe_scenario = scenario_name.replace(" ", "_").replace("/", "-").replace(":", "-")
+        safe_model = model_name.replace("/", "-").replace(":", "-")
+        filename = f"capture_{safe_scenario}_{safe_model}_{timestamp}.json"
+        
+        self._capture_file = str(output_dir / filename)
+    
+    def capture_request_response(
+        self,
+        request_id: int,
+        prompt: Any,
+        response_body: Any,
+        latency_ms: float,
+        success: bool,
+        error: Optional[str] = None,
+        tokens: int = 0,
+        model_type: str = "chat"
+    ) -> None:
+        """Capture a request/response pair for later viewing in HTML report."""
+        if not self.config.capture_request_response:
+            return
+        
+        # Extract readable prompt based on model type
+        if model_type == "chat":
+            if isinstance(prompt, dict):
+                messages = prompt.get("messages", [])
+                prompt_text = "\n".join([
+                    f"[{m.get('role', 'user')}]: {m.get('content', '')}"
+                    for m in messages
+                ])
+            else:
+                prompt_text = str(prompt)
+        elif model_type == "embed":
+            if isinstance(prompt, dict):
+                prompt_text = prompt.get("input", str(prompt))
+            else:
+                prompt_text = str(prompt)
+        elif model_type == "reranker":
+            if isinstance(prompt, dict):
+                query = prompt.get("query", "")
+                docs = prompt.get("documents", [])
+                prompt_text = f"Query: {query}\n\nDocuments:\n" + "\n".join([f"- {d}" for d in docs[:5]])
+                if len(docs) > 5:
+                    prompt_text += f"\n... and {len(docs) - 5} more"
+            else:
+                prompt_text = str(prompt)
+        elif model_type == "vision":
+            if isinstance(prompt, dict):
+                messages = prompt.get("messages", [])
+                prompt_parts = []
+                for m in messages:
+                    role = m.get('role', 'user')
+                    content = m.get('content', '')
+                    # Vision content can be a list with text and image_url
+                    if isinstance(content, list):
+                        text_parts = []
+                        image_count = 0
+                        for item in content:
+                            if isinstance(item, dict):
+                                if item.get('type') == 'text':
+                                    text_parts.append(item.get('text', ''))
+                                elif item.get('type') == 'image_url':
+                                    image_count += 1
+                        content_str = " ".join(text_parts)
+                        if image_count > 0:
+                            content_str += f" [+{image_count} image(s)]"
+                        prompt_parts.append(f"[{role}]: {content_str}")
+                    else:
+                        prompt_parts.append(f"[{role}]: {content}")
+                prompt_text = "\n".join(prompt_parts)
+            else:
+                prompt_text = str(prompt)
+        else:
+            prompt_text = str(prompt) if prompt else ""
+        
+        # Extract readable response
+        if isinstance(response_body, dict):
+            if model_type == "chat":
+                # Handle streaming response with chunks
+                if "chunks" in response_body:
+                    chunks = response_body.get("chunks", [])
+                    # Extract content from streaming chunks
+                    content_parts = []
+                    for chunk in chunks:
+                        choices = chunk.get("choices", [])
+                        if choices:
+                            delta = choices[0].get("delta", {})
+                            content = delta.get("content", "")
+                            if content:
+                                content_parts.append(content)
+                    response_text = "".join(content_parts) if content_parts else "(No content in streaming response)"
+                else:
+                    # Regular non-streaming response
+                    choices = response_body.get("choices", [])
+                    if choices:
+                        response_text = choices[0].get("message", {}).get("content", "")
+                    else:
+                        response_text = json.dumps(response_body, indent=2)
+            elif model_type == "embed":
+                data = response_body.get("data", [])
+                if data:
+                    embedding = data[0].get("embedding", [])
+                    response_text = f"Embedding vector (dim={len(embedding)}): [{embedding[0]:.6f}, {embedding[1]:.6f}, ... , {embedding[-1]:.6f}]" if len(embedding) > 2 else str(embedding)
+                else:
+                    response_text = json.dumps(response_body, indent=2)
+            elif model_type == "reranker":
+                results = response_body.get("results", [])
+                if results:
+                    response_text = "Reranked Results:\n" + "\n".join([
+                        f"  {i+1}. Score: {r.get('relevance_score', r.get('score', 0)):.4f}"
+                        for i, r in enumerate(results[:5])
+                    ])
+                else:
+                    response_text = json.dumps(response_body, indent=2)
+            elif model_type == "vision":
+                # Vision uses same format as chat
+                if "chunks" in response_body:
+                    chunks = response_body.get("chunks", [])
+                    content_parts = []
+                    for chunk in chunks:
+                        choices = chunk.get("choices", [])
+                        if choices:
+                            delta = choices[0].get("delta", {})
+                            content = delta.get("content", "")
+                            if content:
+                                content_parts.append(content)
+                    response_text = "".join(content_parts) if content_parts else "(No content in streaming response)"
+                else:
+                    choices = response_body.get("choices", [])
+                    if choices:
+                        response_text = choices[0].get("message", {}).get("content", "")
+                    else:
+                        response_text = json.dumps(response_body, indent=2)
+            else:
+                response_text = json.dumps(response_body, indent=2)
+        elif response_body:
+            response_text = str(response_body)
+        else:
+            response_text = error or "No response"
+        
+        capture_record = {
+            "request_id": request_id,
+            "timestamp": datetime.now().isoformat(),
+            "prompt": prompt_text,
+            "response": response_text,
+            "latency_ms": round(latency_ms, 2),
+            "success": success,
+            "error": error,
+            "tokens": tokens,
+            "model_type": model_type,
+            "raw_request": prompt if isinstance(prompt, dict) else None,
+            "raw_response": response_body if isinstance(response_body, dict) else None
+        }
+        
+        self._capture_data.append(capture_record)
+    
+    def save_capture(self) -> Optional[str]:
+        """Save captured request/response data to file."""
+        if not self.config.capture_request_response or not self._capture_data:
+            return None
+        
+        if not self._capture_file:
+            return None
+        
+        with open(self._capture_file, 'w', encoding='utf-8') as f:
+            json.dump(self._capture_data, f, indent=2, default=str)
+        
+        print(f"💬 Request/Response data saved to: {self._capture_file}")
+        return self._capture_file
 
 
 # =============================================================================
@@ -998,10 +1370,5 @@ async def run_benchmark(
             print(f"   🐛 Console:      ENABLED")
     
     results = await engine.run_all_scenarios(quiet=config.quiet)
-    
-    if config.capture_responses:
-        for result in results:
-            if result and result.responses:
-                engine.save_responses(result)
     
     return results

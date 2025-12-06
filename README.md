@@ -5,6 +5,7 @@ A comprehensive benchmarking tool for OpenAI-compatible APIs. This tool supports
 ## Features
 
 - ✅ **Multi-Model Support**: Benchmark chat, embedding, reranker, and vision models
+- ✅ **LiteLLM Proxy Support**: Compatible with LiteLLM proxy endpoints for 100+ LLM providers
 - ✅ **Configurable Load Testing**: Set number of requests and concurrency levels
 - ✅ **Batch Scenarios**: Run multiple benchmark scenarios in sequence
 - ✅ **JMeter-Style Execution Modes**: Parallel, ramp-up, stepping, spike, constant rate, arrivals, ultimate thread group

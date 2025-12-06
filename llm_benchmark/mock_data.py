@@ -69,7 +69,7 @@ class ChatMockGenerator(BaseMockGenerator):
     """Mock data generator for chat models."""
     
     def get_endpoint(self) -> str:
-        return "/v1/chat/completions"
+        return "/chat/completions"
     
     def generate(self, count: int = 1) -> List[MockRequest]:
         """Generate chat completion requests."""
@@ -98,7 +98,7 @@ class EmbedMockGenerator(BaseMockGenerator):
     """Mock data generator for embedding models."""
     
     def get_endpoint(self) -> str:
-        return "/v1/embeddings"
+        return "/embeddings"
     
     def generate(self, count: int = 1) -> List[MockRequest]:
         """Generate embedding requests."""
@@ -125,7 +125,7 @@ class RerankerMockGenerator(BaseMockGenerator):
     """Mock data generator for reranker models."""
     
     def get_endpoint(self) -> str:
-        return "/v1/rerank"
+        return "/rerank"
     
     def generate(self, count: int = 1) -> List[MockRequest]:
         """Generate reranker requests."""
@@ -161,7 +161,7 @@ class VisionMockGenerator(BaseMockGenerator):
         self._cached_images: Dict[str, tuple[str, str]] = {}  # path -> (base64, mime_type)
     
     def get_endpoint(self) -> str:
-        return "/v1/chat/completions"
+        return "/chat/completions"
     
     def _get_image_content(self, image_index: int = 0) -> Dict[str, Any]:
         """

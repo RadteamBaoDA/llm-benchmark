@@ -2,16 +2,41 @@
 
 # API Configuration
 api:
-  base_url: "http://localhost:8000"
+  base_url: "http://localhost:11434"
   api_key: ""  # Or use environment variable OPENAI_API_KEY
   timeout: 60
+  streaming: true  # Enable streaming for TTFT/TPOT/ITL metrics (chat models only)
+  endpoint_prefix: "/v1"  # API path prefix: "/v1" for OpenAI/Ollama, "" for LiteLLM proxy
 
 # Model Configuration
+#chat model sample
+# model:
+#   name: "gpt-oss:latest"
+#   type: "chat"  # Options: chat, embed, reranker, vision
+#   max_tokens: 2048
+#   temperature: 0.2
+
+#embed model sample
 model:
-  name: "Qwen/Qwen3-Reranker-0.6B"
-  type: "reranker"  # Options: chat, embed, reranker, vision
-  max_tokens: 1024
+  name: "qwen3-embedding:4b"
+  type: "embed"  # Options: chat, embed, reranker, vision
+  max_tokens: 2048
   temperature: 0.2
+
+# Reranker model sample
+# model:
+#   name: "qwen3-reranker:0.6b"
+#   type: "reranker"  # Options: chat, embed, reranker, vision
+#   max_tokens: 1024
+#   temperature: 0.0
+
+# Vision model sample
+# model:
+#   name: "qwen3-embedding:4b"
+#   type: "vision"  # Options: chat, embed, reranker, vision
+#   max_tokens: 2048
+#   temperature: 0.2
+
 
 # Mock Data Configuration (used for generating benchmark requests)
 mock_data:
@@ -80,7 +105,7 @@ scenario_file: "scenario.yml"
 benchmark:
   default_requests: 100
   default_concurrency: 10
-  capture_responses: false
+  capture_request_response: true  # Save prompt/response for each request to view in HTML report
   output_dir: "results"
   export_formats:
     - "markdown"

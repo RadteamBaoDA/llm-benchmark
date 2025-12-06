@@ -268,6 +268,110 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             font-weight: 600;
         }}
         
+        /* Request/Response styles */
+        .request-card {{
+            background: var(--bg-color);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            margin-bottom: 16px;
+            overflow: hidden;
+        }}
+        
+        .request-header {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 16px;
+            background: var(--card-bg);
+            border-bottom: 1px solid var(--border-color);
+            cursor: pointer;
+        }}
+        
+        .request-header:hover {{
+            background: #f1f5f9;
+        }}
+        
+        .request-header .request-id {{
+            font-weight: 600;
+            color: var(--primary-color);
+        }}
+        
+        .request-header .request-meta {{
+            display: flex;
+            gap: 16px;
+            font-size: 13px;
+            color: var(--text-muted);
+        }}
+        
+        .request-header .status-badge {{
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 500;
+        }}
+        
+        .request-header .status-badge.success {{
+            background: #dcfce7;
+            color: #166534;
+        }}
+        
+        .request-header .status-badge.error {{
+            background: #fee2e2;
+            color: #991b1b;
+        }}
+        
+        .request-body {{
+            display: none;
+            padding: 16px;
+        }}
+        
+        .request-body.expanded {{
+            display: block;
+        }}
+        
+        .request-section {{
+            margin-bottom: 16px;
+        }}
+        
+        .request-section:last-child {{
+            margin-bottom: 0;
+        }}
+        
+        .request-section h4 {{
+            font-size: 12px;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }}
+        
+        .request-section pre {{
+            background: #1e293b;
+            color: #e2e8f0;
+            padding: 12px;
+            border-radius: 6px;
+            overflow-x: auto;
+            font-size: 13px;
+            line-height: 1.5;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }}
+        
+        .no-capture-message {{
+            text-align: center;
+            padding: 40px;
+            color: var(--text-muted);
+        }}
+        
+        .no-capture-message code {{
+            background: var(--bg-color);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 13px;
+        }}
+        
         .nav-tabs {{
             display: flex;
             gap: 8px;
@@ -347,8 +451,16 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
                 <div class="value">{requests_per_sec:.2f}</div>
             </div>
             <div class="stat-card">
+                <div class="label">Tokens/Second</div>
+                <div class="value">{tokens_per_sec_display}</div>
+            </div>
+            <div class="stat-card">
                 <div class="label">Avg Latency</div>
                 <div class="value">{avg_latency:.0f}<span class="unit">ms</span></div>
+            </div>
+            <div class="stat-card">
+                <div class="label">Latency Std Dev</div>
+                <div class="value">{latency_std:.0f}<span class="unit">ms</span></div>
             </div>
             <div class="stat-card">
                 <div class="label">P95 Latency</div>
@@ -363,8 +475,10 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
         <!-- Navigation Tabs -->
         <div class="nav-tabs">
             <button class="nav-tab active" onclick="showTab('overview')">Overview</button>
+            <button class="nav-tab" onclick="showTab('llm-metrics')">LLM Metrics</button>
             <button class="nav-tab" onclick="showTab('latency')">Latency Analysis</button>
             <button class="nav-tab" onclick="showTab('throughput')">Throughput</button>
+            <button class="nav-tab" onclick="showTab('requests')">Request/Response</button>
             <button class="nav-tab" onclick="showTab('errors')">Errors</button>
         </div>
         
@@ -386,11 +500,19 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             </div>
             
             <div class="table-card">
-                <h3>Latency Percentiles</h3>
+                <h3>Latency Statistics (Response Time per Request)</h3>
                 <div class="percentile-grid">
                     <div class="percentile-item">
                         <div class="label">Min</div>
                         <div class="value">{min_latency:.0f}ms</div>
+                    </div>
+                    <div class="percentile-item">
+                        <div class="label">Average</div>
+                        <div class="value">{avg_latency:.0f}ms</div>
+                    </div>
+                    <div class="percentile-item">
+                        <div class="label">Std Deviation</div>
+                        <div class="value">{latency_std:.0f}ms</div>
                     </div>
                     <div class="percentile-item">
                         <div class="label">P50 (Median)</div>
@@ -416,6 +538,136 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             </div>
         </div>
         
+        <!-- LLM Metrics Tab (BentoML Guide) -->
+        <div id="llm-metrics" class="tab-content">
+            <div class="table-card" style="margin-bottom: 24px;">
+                <h3>📊 Key LLM Inference Metrics (BentoML Guide)</h3>
+                <p style="color: var(--text-muted); margin-bottom: 16px;">
+                    These metrics follow the <a href="https://bentoml.com/llm/inference-optimization/llm-inference-metrics" target="_blank" style="color: var(--primary-color);">BentoML LLM Inference Metrics Guide</a> for standardized LLM performance measurement.
+                </p>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Metric</th>
+                            <th>Avg (ms)</th>
+                            <th>Avg (s)</th>
+                            <th>P50 (ms)</th>
+                            <th>P95 (ms)</th>
+                            <th>P99 (ms)</th>
+                            <th>Description</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>E2EL</strong> (End-to-End Latency)</td>
+                            <td>{avg_latency:.0f}</td>
+                            <td>{avg_latency_sec:.3f}</td>
+                            <td>{p50_latency:.0f}</td>
+                            <td>{p95_latency:.0f}</td>
+                            <td>{p99_latency:.0f}</td>
+                            <td>Total time from request to final token</td>
+                        </tr>
+                        <tr>
+                            <td><strong>TTFT</strong> (Time to First Token)</td>
+                            <td>{ttft_avg_display}</td>
+                            <td>{ttft_avg_sec_display}</td>
+                            <td>{ttft_p50_display}</td>
+                            <td>{ttft_p95_display}</td>
+                            <td>{ttft_p99_display}</td>
+                            <td>Time to generate first token (streaming only)</td>
+                        </tr>
+                        <tr>
+                            <td><strong>TPOT</strong> (Time Per Output Token)</td>
+                            <td>{tpot_avg_display}</td>
+                            <td>{tpot_avg_sec_display}</td>
+                            <td>{tpot_p50_display}</td>
+                            <td>{tpot_p95_display}</td>
+                            <td>{tpot_p99_display}</td>
+                            <td>Average time gap between tokens: (E2EL-TTFT)/(tokens-1)</td>
+                        </tr>
+                        <tr>
+                            <td><strong>ITL</strong> (Inter-Token Latency)</td>
+                            <td>{itl_avg_display}</td>
+                            <td>{itl_avg_sec_display}</td>
+                            <td>-</td>
+                            <td>-</td>
+                            <td>-</td>
+                            <td>Exact pause between consecutive tokens</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            
+            <div class="table-card" style="margin-bottom: 24px;">
+                <h3>🚀 Throughput Metrics</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Metric</th>
+                            <th>Value</th>
+                            <th>Description</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>RPS</strong> (Requests Per Second)</td>
+                            <td>{requests_per_sec:.2f}</td>
+                            <td>How many requests completed per second</td>
+                        </tr>
+                        <tr>
+                            <td><strong>TPS</strong> (Tokens Per Second - Combined)</td>
+                            <td>{tokens_per_sec_display}</td>
+                            <td>Total tokens (input + output) processed per second</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Input TPS</strong></td>
+                            <td>{input_tps_display}</td>
+                            <td>Input/prompt tokens processed per second</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Output TPS</strong></td>
+                            <td>{output_tps_display}</td>
+                            <td>Output/completion tokens generated per second</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            
+            <div class="table-card">
+                <h3>📈 Token Statistics</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Metric</th>
+                            <th>Value</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>Total Tokens (Combined)</td>
+                            <td>{total_tokens_display}</td>
+                        </tr>
+                        <tr>
+                            <td>Total Prompt Tokens (Input)</td>
+                            <td>{total_prompt_tokens}</td>
+                        </tr>
+                        <tr>
+                            <td>Total Completion Tokens (Output)</td>
+                            <td>{total_completion_tokens}</td>
+                        </tr>
+                        <tr>
+                            <td>Streaming Requests</td>
+                            <td>{streaming_requests}</td>
+                        </tr>
+                        <tr>
+                            <td>Non-Streaming Requests</td>
+                            <td>{non_streaming_requests}</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        
         <!-- Latency Analysis Tab -->
         <div id="latency" class="tab-content">
             <div class="charts-section">
@@ -426,11 +678,66 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
                     </div>
                 </div>
                 <div class="chart-card">
-                    <h3>Response Time Percentiles Over Time</h3>
+                    <h3>Response Time Percentiles Comparison</h3>
                     <div class="chart-container">
                         <canvas id="latencyPercentilesChart"></canvas>
                     </div>
                 </div>
+            </div>
+            
+            <div class="table-card">
+                <h3>Detailed Latency Statistics (Response Time per Request)</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Metric</th>
+                            <th>Value</th>
+                            <th>Description</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>Minimum Latency</td>
+                            <td>{min_latency:.0f}ms</td>
+                            <td>Fastest response time observed</td>
+                        </tr>
+                        <tr>
+                            <td>Average Latency</td>
+                            <td>{avg_latency:.0f}ms</td>
+                            <td>Mean response time across all requests</td>
+                        </tr>
+                        <tr>
+                            <td>Standard Deviation</td>
+                            <td>{latency_std:.0f}ms</td>
+                            <td>Variability measure - lower is more consistent</td>
+                        </tr>
+                        <tr>
+                            <td>P50 (Median)</td>
+                            <td>{p50_latency:.0f}ms</td>
+                            <td>50% of requests completed under this time</td>
+                        </tr>
+                        <tr>
+                            <td>P90</td>
+                            <td>{p90_latency:.0f}ms</td>
+                            <td>90% of requests completed under this time</td>
+                        </tr>
+                        <tr>
+                            <td>P95</td>
+                            <td>{p95_latency:.0f}ms</td>
+                            <td>95% of requests completed under this time</td>
+                        </tr>
+                        <tr>
+                            <td>P99</td>
+                            <td>{p99_latency:.0f}ms</td>
+                            <td>99% of requests completed under this time</td>
+                        </tr>
+                        <tr>
+                            <td>Maximum Latency</td>
+                            <td>{max_latency:.0f}ms</td>
+                            <td>Slowest response time observed</td>
+                        </tr>
+                    </tbody>
+                </table>
             </div>
         </div>
         
@@ -458,35 +765,71 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
                         <tr>
                             <th>Metric</th>
                             <th>Value</th>
+                            <th>Description</th>
                         </tr>
                     </thead>
                     <tbody>
                         <tr>
                             <td>Total Requests</td>
                             <td>{total_requests}</td>
+                            <td>Total number of API requests sent</td>
                         </tr>
                         <tr>
                             <td>Successful Requests</td>
                             <td>{successful_requests}</td>
+                            <td>Requests completed with HTTP 2xx status</td>
                         </tr>
                         <tr>
                             <td>Failed Requests</td>
                             <td>{failed_requests}</td>
+                            <td>Requests that failed or returned errors</td>
                         </tr>
                         <tr>
-                            <td>Average Requests/Second</td>
+                            <td>Test Duration</td>
+                            <td>{duration:.2f}s</td>
+                            <td>Total time from first to last request</td>
+                        </tr>
+                        <tr>
+                            <td>Requests/Second (RPS)</td>
                             <td>{requests_per_sec:.2f}</td>
+                            <td>Average throughput: successful requests per second</td>
                         </tr>
                         <tr>
                             <td>Total Tokens</td>
-                            <td>{total_tokens}</td>
+                            <td>{total_tokens_display}</td>
+                            <td>Sum of all tokens processed (prompt + completion)</td>
                         </tr>
                         <tr>
-                            <td>Average Tokens/Second</td>
-                            <td>{tokens_per_sec:.2f}</td>
+                            <td>Tokens/Second (TPS)</td>
+                            <td>{tokens_per_sec_display}</td>
+                            <td>Average token throughput per second</td>
+                        </tr>
+                        <tr>
+                            <td>Avg Response Time</td>
+                            <td>{avg_latency:.0f}ms</td>
+                            <td>Average latency per request (end-to-end)</td>
+                        </tr>
+                        <tr>
+                            <td>Response Time Std Dev</td>
+                            <td>{latency_std:.0f}ms</td>
+                            <td>Standard deviation - measures consistency</td>
                         </tr>
                     </tbody>
                 </table>
+            </div>
+        </div>
+        
+        <!-- Request/Response Tab -->
+        <div id="requests" class="tab-content">
+            <div class="table-card" style="margin-bottom: 24px;">
+                <h3>💬 Request/Response Log</h3>
+                <p style="color: var(--text-muted); margin-bottom: 16px;">
+                    View the prompt sent to the LLM and the response received for each request.
+                    {capture_status}
+                </p>
+                <div id="request-list" style="max-height: 600px; overflow-y: auto;">
+                    {request_response_content}
+                </div>
             </div>
         </div>
         
@@ -526,6 +869,12 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             }});
             document.getElementById(tabId).classList.add('active');
             event.target.classList.add('active');
+        }}
+        
+        // Toggle request/response card
+        function toggleRequest(header) {{
+            const body = header.nextElementSibling;
+            body.classList.toggle('expanded');
         }}
         
         // Chart.js defaults
@@ -634,47 +983,59 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             }}
         }});
         
-        // Latency Percentiles Over Time
+        // Latency Percentiles Comparison (Horizontal Bar Chart)
+        const percentileData = {{
+            min: {min_latency:.2f},
+            avg: {avg_latency:.2f},
+            p50: {p50_latency:.2f},
+            p90: {p90_latency:.2f},
+            p95: {p95_latency:.2f},
+            p99: {p99_latency:.2f},
+            max: {max_latency:.2f}
+        }};
         new Chart(document.getElementById('latencyPercentilesChart'), {{
-            type: 'line',
+            type: 'bar',
             data: {{
-                labels: latencyOverTimeData.map(d => (d.elapsed_ms / 1000).toFixed(1) + 's'),
+                labels: ['Min', 'Avg', 'P50', 'P90', 'P95', 'P99', 'Max'],
                 datasets: [{{
-                    label: 'Min',
-                    data: latencyOverTimeData.map(d => d.min_latency_ms),
-                    borderColor: '#16a34a',
-                    fill: false,
-                    tension: 0.3
-                }}, {{
-                    label: 'Avg',
-                    data: latencyOverTimeData.map(d => d.avg_latency_ms),
-                    borderColor: '#2563eb',
-                    fill: false,
-                    tension: 0.3
-                }}, {{
-                    label: 'P95',
-                    data: latencyOverTimeData.map(d => d.p95_latency_ms),
-                    borderColor: '#ea580c',
-                    fill: false,
-                    tension: 0.3
-                }}, {{
-                    label: 'Max',
-                    data: latencyOverTimeData.map(d => d.max_latency_ms),
-                    borderColor: '#dc2626',
-                    fill: false,
-                    tension: 0.3
+                    label: 'Response Time (ms)',
+                    data: [percentileData.min, percentileData.avg, percentileData.p50, percentileData.p90, percentileData.p95, percentileData.p99, percentileData.max],
+                    backgroundColor: [
+                        'rgba(22, 163, 74, 0.7)',   // Min - green
+                        'rgba(37, 99, 235, 0.7)',   // Avg - blue
+                        'rgba(59, 130, 246, 0.7)',  // P50 - light blue
+                        'rgba(245, 158, 11, 0.7)',  // P90 - amber
+                        'rgba(234, 88, 12, 0.7)',   // P95 - orange
+                        'rgba(220, 38, 38, 0.7)',   // P99 - red
+                        'rgba(127, 29, 29, 0.7)'    // Max - dark red
+                    ],
+                    borderColor: [
+                        '#16a34a', '#2563eb', '#3b82f6', '#f59e0b', '#ea580c', '#dc2626', '#7f1d1d'
+                    ],
+                    borderWidth: 1
                 }}]
             }},
             options: {{
+                indexAxis: 'y',
                 responsive: true,
                 maintainAspectRatio: false,
                 plugins: {{
-                    legend: {{ position: 'top' }}
+                    legend: {{ display: false }},
+                    tooltip: {{
+                        callbacks: {{
+                            label: function(context) {{
+                                return context.parsed.x.toFixed(2) + ' ms';
+                            }}
+                        }}
+                    }}
                 }},
                 scales: {{
-                    y: {{
+                    x: {{
                         beginAtZero: true,
                         title: {{ display: true, text: 'Response Time (ms)' }}
+                    }},
+                    y: {{
+                        title: {{ display: true, text: 'Percentile' }}
                     }}
                 }}
             }}
@@ -954,6 +1315,56 @@ class HTMLReportGenerator:
         # Generate error table
         error_table = self._generate_error_table(stats.get("errors", {}))
         
+        # Handle tokens display - show N/A if not available (e.g., for reranker models)
+        total_tokens = stats.get("total_tokens", 0)
+        tokens_per_sec = stats.get("tokens_per_sec", 0)
+        tokens_per_sec_display = f"{tokens_per_sec:.2f}" if total_tokens > 0 else "N/A"
+        total_tokens_display = str(total_tokens) if total_tokens > 0 else "N/A (not reported by API)"
+        
+        # Input/Output tokens
+        input_tps = stats.get("input_tokens_per_sec", 0)
+        output_tps = stats.get("output_tokens_per_sec", 0)
+        input_tps_display = f"{input_tps:.2f}" if input_tps > 0 else "N/A"
+        output_tps_display = f"{output_tps:.2f}" if output_tps > 0 else "N/A"
+        
+        # TTFT metrics (BentoML guide)
+        ttft_avg = stats.get("ttft_avg_ms", 0)
+        ttft_p50 = stats.get("ttft_p50_ms", 0)
+        ttft_p95 = stats.get("ttft_p95_ms", 0)
+        ttft_p99 = stats.get("ttft_p99_ms", 0)
+        has_ttft = ttft_avg > 0
+        ttft_avg_display = f"{ttft_avg:.0f}" if has_ttft else "N/A"
+        ttft_avg_sec_display = f"{ttft_avg / 1000:.3f}" if has_ttft else "N/A"
+        ttft_p50_display = f"{ttft_p50:.0f}" if has_ttft else "N/A"
+        ttft_p95_display = f"{ttft_p95:.0f}" if has_ttft else "N/A"
+        ttft_p99_display = f"{ttft_p99:.0f}" if has_ttft else "N/A"
+        
+        # TPOT metrics (BentoML guide)
+        tpot_avg = stats.get("tpot_avg_ms", 0)
+        tpot_p50 = stats.get("tpot_p50_ms", 0)
+        tpot_p95 = stats.get("tpot_p95_ms", 0)
+        tpot_p99 = stats.get("tpot_p99_ms", 0)
+        has_tpot = tpot_avg > 0
+        tpot_avg_display = f"{tpot_avg:.2f}" if has_tpot else "N/A"
+        tpot_avg_sec_display = f"{tpot_avg / 1000:.4f}" if has_tpot else "N/A"
+        tpot_p50_display = f"{tpot_p50:.2f}" if has_tpot else "N/A"
+        tpot_p95_display = f"{tpot_p95:.2f}" if has_tpot else "N/A"
+        tpot_p99_display = f"{tpot_p99:.2f}" if has_tpot else "N/A"
+        
+        # ITL metrics (BentoML guide)
+        itl_avg = stats.get("itl_avg_ms", 0)
+        has_itl = itl_avg > 0
+        itl_avg_display = f"{itl_avg:.2f}" if has_itl else "N/A"
+        itl_avg_sec_display = f"{itl_avg / 1000:.4f}" if has_itl else "N/A"
+        
+        # Prompt and completion tokens
+        total_prompt_tokens = stats.get("total_prompt_tokens", 0)
+        total_completion_tokens = stats.get("total_completion_tokens", 0)
+        
+        # Streaming stats
+        streaming_requests = stats.get("streaming_requests", 0)
+        non_streaming_requests = stats.get("non_streaming_requests", 0)
+        
         # Prepare template data
         data = {
             "scenario_name": stats.get("scenario_name", "Unknown"),
@@ -966,21 +1377,70 @@ class HTMLReportGenerator:
             "failed_requests": stats.get("failed_requests", 0),
             "success_rate": stats.get("success_rate", 0),
             "requests_per_sec": stats.get("requests_per_sec", 0),
-            "tokens_per_sec": stats.get("tokens_per_sec", 0),
-            "total_tokens": stats.get("total_tokens", 0),
+            "tokens_per_sec": tokens_per_sec,
+            "tokens_per_sec_display": tokens_per_sec_display,
+            "total_tokens": total_tokens,
+            "total_tokens_display": total_tokens_display,
+            "total_prompt_tokens": total_prompt_tokens,
+            "total_completion_tokens": total_completion_tokens,
+            "input_tps_display": input_tps_display,
+            "output_tps_display": output_tps_display,
+            # E2EL (End-to-End Latency) - same as latency
             "avg_latency": stats.get("latency_avg_ms", 0),
+            "latency_std": stats.get("latency_std_ms", 0),
             "min_latency": stats.get("latency_min_ms", 0),
             "max_latency": stats.get("latency_max_ms", 0),
             "p50_latency": stats.get("latency_p50_ms", 0),
             "p90_latency": stats.get("latency_p90_ms", 0),
             "p95_latency": stats.get("latency_p95_ms", 0),
             "p99_latency": stats.get("latency_p99_ms", 0),
+            # TTFT (Time to First Token)
+            "ttft_avg_display": ttft_avg_display,
+            "ttft_avg_sec_display": ttft_avg_sec_display,
+            "ttft_p50_display": ttft_p50_display,
+            "ttft_p95_display": ttft_p95_display,
+            "ttft_p99_display": ttft_p99_display,
+            "has_ttft": has_ttft,
+            # TPOT (Time Per Output Token)
+            "tpot_avg_display": tpot_avg_display,
+            "tpot_avg_sec_display": tpot_avg_sec_display,
+            "tpot_p50_display": tpot_p50_display,
+            "tpot_p95_display": tpot_p95_display,
+            "tpot_p99_display": tpot_p99_display,
+            "has_tpot": has_tpot,
+            # ITL (Inter-Token Latency)
+            "itl_avg_display": itl_avg_display,
+            "itl_avg_sec_display": itl_avg_sec_display,
+            "has_itl": has_itl,
+            # E2EL in seconds
+            "avg_latency_sec": stats.get("latency_avg_ms", 0) / 1000,
+            # Streaming
+            "streaming_requests": streaming_requests,
+            "non_streaming_requests": non_streaming_requests,
+            # Charts data
             "latency_over_time_json": json.dumps(latency_over_time),
             "throughput_over_time_json": json.dumps(throughput_over_time),
             "latency_distribution_json": json.dumps(latency_distribution),
             "error_table": error_table,
             "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         }
+        
+        # Load captured request/response data
+        capture_file = self._find_capture_file(
+            stats.get("scenario_name", ""),
+            stats.get("model_name", ""),
+            self.output_dir.parent  # Look in the results directory (parent of reports)
+        )
+        # Also try the output directory itself
+        if not capture_file:
+            capture_file = self._find_capture_file(
+                stats.get("scenario_name", ""),
+                stats.get("model_name", ""),
+                self.output_dir
+            )
+        capture_status, request_response_content = self._generate_request_response_content(capture_file)
+        data["capture_status"] = capture_status
+        data["request_response_content"] = request_response_content
         
         # Render template
         html = HTML_TEMPLATE.format(**data)
@@ -1017,6 +1477,99 @@ class HTMLReportGenerator:
             </tbody>
         </table>
         """
+    
+    def _find_capture_file(self, scenario_name: str, model_name: str, timeseries_dir: Path) -> Optional[str]:
+        """Find the capture file matching the scenario and model."""
+        import glob
+        
+        # Clean names for file matching
+        safe_scenario = scenario_name.replace(" ", "_").replace("/", "-").replace(":", "-")
+        safe_model = model_name.replace("/", "-").replace(":", "-")
+        
+        # Search for capture files
+        pattern = str(timeseries_dir / f"capture_{safe_scenario}_{safe_model}_*.json")
+        files = sorted(glob.glob(pattern), reverse=True)  # Most recent first
+        
+        if files:
+            return files[0]
+        return None
+    
+    def _generate_request_response_content(self, capture_file: Optional[str]) -> tuple:
+        """Generate HTML content for request/response viewer."""
+        if not capture_file or not Path(capture_file).exists():
+            status = "Enable <code>capture_request_response: true</code> in config.yml to capture request/response data."
+            content = '<div class="no-capture-message"><p>No captured data available.</p></div>'
+            return status, content
+        
+        try:
+            with open(capture_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+        except Exception as e:
+            status = f"Error loading capture file: {e}"
+            content = '<div class="no-capture-message"><p>Failed to load captured data.</p></div>'
+            return status, content
+        
+        if not data:
+            status = "Capture file is empty."
+            content = '<div class="no-capture-message"><p>No requests were captured.</p></div>'
+            return status, content
+        
+        status = f"Showing {len(data)} captured request(s). Click on a request to expand."
+        
+        cards = []
+        for i, item in enumerate(data):
+            request_id = item.get("request_id", i + 1)
+            latency_ms = item.get("latency_ms", 0)
+            success = item.get("success", False)
+            tokens = item.get("tokens", 0)
+            prompt = item.get("prompt", "")
+            response = item.get("response", "")
+            error = item.get("error", "")
+            
+            status_class = "success" if success else "error"
+            status_text = "Success" if success else "Failed"
+            
+            # Escape HTML in prompt and response
+            prompt_escaped = self._escape_html(prompt)
+            response_escaped = self._escape_html(response) if success else self._escape_html(error or "No response")
+            
+            card = f'''
+            <div class="request-card">
+                <div class="request-header" onclick="toggleRequest(this)">
+                    <span class="request-id">Request #{request_id}</span>
+                    <div class="request-meta">
+                        <span>⏱️ {latency_ms:.0f}ms</span>
+                        <span>📝 {tokens} tokens</span>
+                        <span class="status-badge {status_class}">{status_text}</span>
+                    </div>
+                </div>
+                <div class="request-body">
+                    <div class="request-section">
+                        <h4>📤 Prompt</h4>
+                        <pre>{prompt_escaped}</pre>
+                    </div>
+                    <div class="request-section">
+                        <h4>📥 Response</h4>
+                        <pre>{response_escaped}</pre>
+                    </div>
+                </div>
+            </div>
+            '''
+            cards.append(card)
+        
+        content = "\n".join(cards)
+        return status, content
+    
+    def _escape_html(self, text: str) -> str:
+        """Escape HTML special characters."""
+        if not text:
+            return ""
+        return (text
+                .replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace('"', "&quot;")
+                .replace("'", "&#39;"))
     
     def generate_index(self, readers: List[TimeseriesReader]) -> str:
         """

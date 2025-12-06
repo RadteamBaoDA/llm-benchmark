@@ -67,6 +67,7 @@ class TestAPIConfig:
         assert config.base_url == "http://localhost:8000"
         assert config.api_key == ""
         assert config.timeout == 60
+        assert config.endpoint_prefix == "/v1"
     
     def test_api_config_custom_values(self):
         """Test APIConfig with custom values."""
@@ -78,6 +79,15 @@ class TestAPIConfig:
         assert config.base_url == "http://api.example.com"
         assert config.api_key == "secret-key"
         assert config.timeout == 120
+    
+    def test_api_config_litellm_proxy(self):
+        """Test APIConfig for LiteLLM proxy (no endpoint prefix)."""
+        config = APIConfig(
+            base_url="http://localhost:4000",
+            endpoint_prefix=""
+        )
+        assert config.base_url == "http://localhost:4000"
+        assert config.endpoint_prefix == ""
 
 
 class TestModelConfig:
@@ -196,7 +206,7 @@ class TestBenchmarkConfig:
         assert config.scenarios == []
         assert config.default_requests == 100
         assert config.default_concurrency == 10
-        assert config.capture_responses is False
+        assert config.capture_request_response is False
         assert config.output_dir == "results"
         assert config.export_formats == ["markdown", "csv"]
         assert config.quiet is False
@@ -290,7 +300,7 @@ class TestConfigFunctions:
             ],
             "benchmark": {
                 "default_requests": 50,
-                "capture_responses": True
+                "capture_request_response": True
             }
         }
         
@@ -299,7 +309,7 @@ class TestConfigFunctions:
         assert config.api.api_key == "test-key"
         assert config.model.name == "test-model"
         assert config.model.type == "embed"
-        assert config.capture_responses is True
+        assert config.capture_request_response is True
     
     def test_parse_config_with_vision_paths(self):
         """Test config parsing with vision image paths."""
@@ -333,11 +343,11 @@ class TestMockRequest:
         """Test MockRequest creation."""
         request = MockRequest(
             payload={"model": "test"},
-            endpoint="/v1/chat/completions",
+            endpoint="/chat/completions",
             description="Test request"
         )
         assert request.payload == {"model": "test"}
-        assert request.endpoint == "/v1/chat/completions"
+        assert request.endpoint == "/chat/completions"
         assert request.description == "Test request"
 
 
@@ -384,7 +394,7 @@ class TestChatMockGenerator:
         mock_config = MockDataConfig()
         generator = ChatMockGenerator(model_config, mock_config)
         
-        assert generator.get_endpoint() == "/v1/chat/completions"
+        assert generator.get_endpoint() == "/chat/completions"
     
     def test_generate_single(self):
         """Test generating single request."""
@@ -409,7 +419,7 @@ class TestChatMockGenerator:
         
         assert len(requests) == 10
         for req in requests:
-            assert req.endpoint == "/v1/chat/completions"
+            assert req.endpoint == "/chat/completions"
             assert "messages" in req.payload
             assert req.payload["stream"] is False
 
@@ -423,7 +433,7 @@ class TestEmbedMockGenerator:
         mock_config = MockDataConfig()
         generator = EmbedMockGenerator(model_config, mock_config)
         
-        assert generator.get_endpoint() == "/v1/embeddings"
+        assert generator.get_endpoint() == "/embeddings"
     
     def test_generate(self):
         """Test generating embedding requests."""
@@ -435,7 +445,7 @@ class TestEmbedMockGenerator:
         
         assert len(requests) == 3
         for req in requests:
-            assert req.endpoint == "/v1/embeddings"
+            assert req.endpoint == "/embeddings"
             assert req.payload["model"] == "text-embedding-3-small"
             assert req.payload["input"] == "Test text"
             assert req.payload["encoding_format"] == "float"
@@ -450,7 +460,7 @@ class TestRerankerMockGenerator:
         mock_config = MockDataConfig()
         generator = RerankerMockGenerator(model_config, mock_config)
         
-        assert generator.get_endpoint() == "/v1/rerank"
+        assert generator.get_endpoint() == "/rerank"
     
     def test_generate(self):
         """Test generating reranker requests."""
@@ -465,7 +475,7 @@ class TestRerankerMockGenerator:
         
         assert len(requests) == 2
         for req in requests:
-            assert req.endpoint == "/v1/rerank"
+            assert req.endpoint == "/rerank"
             assert req.payload["query"] == "test query"
             assert len(req.payload["documents"]) == 3
             assert req.payload["top_n"] == 3
@@ -480,7 +490,7 @@ class TestVisionMockGenerator:
         mock_config = MockDataConfig()
         generator = VisionMockGenerator(model_config, mock_config)
         
-        assert generator.get_endpoint() == "/v1/chat/completions"
+        assert generator.get_endpoint() == "/chat/completions"
     
     def test_generate_with_url(self):
         """Test generating with image URL."""

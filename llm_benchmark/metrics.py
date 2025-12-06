@@ -45,6 +45,7 @@ class BenchmarkMetrics:
     latencies: List[float] = field(default_factory=list)
     avg_latency: float = 0.0
     p50_latency: float = 0.0
+    p90_latency: float = 0.0
     p95_latency: float = 0.0
     p99_latency: float = 0.0
     min_latency: float = 0.0
@@ -84,6 +85,7 @@ class BenchmarkMetrics:
         self.latencies = [m.latency for m in successful]
         self.avg_latency = statistics.mean(self.latencies)
         self.p50_latency = float(np.percentile(self.latencies, 50))
+        self.p90_latency = float(np.percentile(self.latencies, 90))
         self.p95_latency = float(np.percentile(self.latencies, 95))
         self.p99_latency = float(np.percentile(self.latencies, 99))
         self.min_latency = min(self.latencies)

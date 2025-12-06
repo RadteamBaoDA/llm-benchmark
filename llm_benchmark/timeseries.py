@@ -23,7 +23,7 @@ class TimeseriesRecord:
     model_name: str
     model_type: str
     request_id: int
-    latency_ms: float  # Request latency in milliseconds
+    latency_ms: float  # Request latency in milliseconds (E2EL - End-to-End Latency)
     success: bool
     status_code: Optional[int] = None
     tokens: int = 0
@@ -31,6 +31,11 @@ class TimeseriesRecord:
     completion_tokens: int = 0
     error: Optional[str] = None
     concurrent_requests: int = 0
+    # LLM-specific metrics (BentoML guide)
+    ttft_ms: Optional[float] = None  # Time to First Token (milliseconds)
+    tpot_ms: Optional[float] = None  # Time Per Output Token (milliseconds)
+    itl_ms: Optional[float] = None   # Inter-Token Latency average (milliseconds)
+    streaming: bool = False          # Whether this was a streaming request
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
@@ -43,7 +48,8 @@ class TimeseriesWriter:
     CSV_HEADERS = [
         "timestamp", "elapsed_ms", "scenario_name", "model_name", "model_type",
         "request_id", "latency_ms", "success", "status_code", "tokens",
-        "prompt_tokens", "completion_tokens", "error", "concurrent_requests"
+        "prompt_tokens", "completion_tokens", "error", "concurrent_requests",
+        "ttft_ms", "tpot_ms", "itl_ms", "streaming"
     ]
     
     def __init__(self, output_dir: str = "results", format: str = "csv"):
@@ -76,8 +82,8 @@ class TimeseriesWriter:
         self._close_file()
         
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        safe_scenario = scenario_name.replace(" ", "_").replace("/", "-")
-        safe_model = model_name.replace("/", "-")
+        safe_scenario = scenario_name.replace(" ", "_").replace("/", "-").replace(":", "-")
+        safe_model = model_name.replace("/", "-").replace(":", "-")
         
         if self.format == "csv":
             filename = f"timeseries_{safe_scenario}_{safe_model}_{timestamp}.csv"
@@ -110,9 +116,13 @@ class TimeseriesWriter:
         prompt_tokens: int = 0,
         completion_tokens: int = 0,
         error: Optional[str] = None,
-        concurrent_requests: int = 0
+        concurrent_requests: int = 0,
+        ttft_ms: Optional[float] = None,
+        tpot_ms: Optional[float] = None,
+        itl_ms: Optional[float] = None,
+        streaming: bool = False
     ) -> None:
-        """Record a single request metric."""
+        """Record a single request metric with LLM-specific metrics (BentoML guide)."""
         with self._lock:
             if self._start_time is None:
                 self._start_time = time.time()
@@ -134,7 +144,11 @@ class TimeseriesWriter:
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
                 error=error,
-                concurrent_requests=concurrent_requests
+                concurrent_requests=concurrent_requests,
+                ttft_ms=ttft_ms,
+                tpot_ms=tpot_ms,
+                itl_ms=itl_ms,
+                streaming=streaming
             )
             
             self._records.append(record)
@@ -223,7 +237,12 @@ class TimeseriesReader:
                     prompt_tokens=int(row["prompt_tokens"]) if row["prompt_tokens"] else 0,
                     completion_tokens=int(row["completion_tokens"]) if row["completion_tokens"] else 0,
                     error=row["error"] if row["error"] else None,
-                    concurrent_requests=int(row["concurrent_requests"]) if row["concurrent_requests"] else 0
+                    concurrent_requests=int(row["concurrent_requests"]) if row["concurrent_requests"] else 0,
+                    # LLM-specific metrics (optional for backward compatibility)
+                    ttft_ms=float(row["ttft_ms"]) if row.get("ttft_ms") else None,
+                    tpot_ms=float(row["tpot_ms"]) if row.get("tpot_ms") else None,
+                    itl_ms=float(row["itl_ms"]) if row.get("itl_ms") else None,
+                    streaming=row.get("streaming", "").lower() == "true"
                 )
                 self.records.append(record)
     
@@ -237,7 +256,7 @@ class TimeseriesReader:
                     self.records.append(record)
     
     def get_statistics(self) -> Dict[str, Any]:
-        """Calculate statistics from timeseries data."""
+        """Calculate statistics from timeseries data following BentoML LLM metrics guide."""
         if not self.records:
             return {}
         
@@ -267,7 +286,17 @@ class TimeseriesReader:
         }
         
         if latencies:
+            # E2EL (End-to-End Latency) - same as latency_ms
             stats.update({
+                "e2el_avg_ms": float(np.mean(latencies)),
+                "e2el_min_ms": float(np.min(latencies)),
+                "e2el_max_ms": float(np.max(latencies)),
+                "e2el_p50_ms": float(np.percentile(latencies, 50)),
+                "e2el_p90_ms": float(np.percentile(latencies, 90)),
+                "e2el_p95_ms": float(np.percentile(latencies, 95)),
+                "e2el_p99_ms": float(np.percentile(latencies, 99)),
+                "e2el_std_ms": float(np.std(latencies)),
+                # Aliases for backward compatibility
                 "latency_avg_ms": float(np.mean(latencies)),
                 "latency_min_ms": float(np.min(latencies)),
                 "latency_max_ms": float(np.max(latencies)),
@@ -278,14 +307,85 @@ class TimeseriesReader:
                 "latency_std_ms": float(np.std(latencies)),
             })
             
-            # Throughput
+            # TTFT (Time to First Token) metrics
+            ttft_values = [r.ttft_ms for r in successful if r.ttft_ms is not None]
+            if ttft_values:
+                stats.update({
+                    "ttft_avg_ms": float(np.mean(ttft_values)),
+                    "ttft_min_ms": float(np.min(ttft_values)),
+                    "ttft_max_ms": float(np.max(ttft_values)),
+                    "ttft_p50_ms": float(np.percentile(ttft_values, 50)),
+                    "ttft_p90_ms": float(np.percentile(ttft_values, 90)),
+                    "ttft_p95_ms": float(np.percentile(ttft_values, 95)),
+                    "ttft_p99_ms": float(np.percentile(ttft_values, 99)),
+                    "ttft_std_ms": float(np.std(ttft_values)),
+                })
+            
+            # TPOT (Time Per Output Token) metrics
+            tpot_values = [r.tpot_ms for r in successful if r.tpot_ms is not None]
+            if tpot_values:
+                stats.update({
+                    "tpot_avg_ms": float(np.mean(tpot_values)),
+                    "tpot_min_ms": float(np.min(tpot_values)),
+                    "tpot_max_ms": float(np.max(tpot_values)),
+                    "tpot_p50_ms": float(np.percentile(tpot_values, 50)),
+                    "tpot_p90_ms": float(np.percentile(tpot_values, 90)),
+                    "tpot_p95_ms": float(np.percentile(tpot_values, 95)),
+                    "tpot_p99_ms": float(np.percentile(tpot_values, 99)),
+                    "tpot_std_ms": float(np.std(tpot_values)),
+                })
+            
+            # ITL (Inter-Token Latency) metrics
+            itl_values = [r.itl_ms for r in successful if r.itl_ms is not None]
+            if itl_values:
+                stats.update({
+                    "itl_avg_ms": float(np.mean(itl_values)),
+                    "itl_min_ms": float(np.min(itl_values)),
+                    "itl_max_ms": float(np.max(itl_values)),
+                    "itl_p50_ms": float(np.percentile(itl_values, 50)),
+                    "itl_p90_ms": float(np.percentile(itl_values, 90)),
+                    "itl_p95_ms": float(np.percentile(itl_values, 95)),
+                    "itl_p99_ms": float(np.percentile(itl_values, 99)),
+                    "itl_std_ms": float(np.std(itl_values)),
+                })
+            
+            # Token Generation Time = E2EL - TTFT
+            if ttft_values:
+                tgt_values = [r.latency_ms - r.ttft_ms for r in successful 
+                              if r.ttft_ms is not None]
+                if tgt_values:
+                    stats.update({
+                        "token_gen_time_avg_ms": float(np.mean(tgt_values)),
+                        "token_gen_time_p50_ms": float(np.percentile(tgt_values, 50)),
+                        "token_gen_time_p95_ms": float(np.percentile(tgt_values, 95)),
+                        "token_gen_time_p99_ms": float(np.percentile(tgt_values, 99)),
+                    })
+            
+            # Throughput metrics
             if duration > 0:
                 stats["requests_per_sec"] = len(successful) / duration
                 
+                # Token counts
                 total_tokens = sum(r.tokens for r in successful)
+                total_prompt_tokens = sum(r.prompt_tokens for r in successful)
+                total_completion_tokens = sum(r.completion_tokens for r in successful)
+                
+                stats["total_tokens"] = total_tokens
+                stats["total_prompt_tokens"] = total_prompt_tokens
+                stats["total_completion_tokens"] = total_completion_tokens
+                
+                # Tokens per second (combined, input, output)
                 if total_tokens > 0:
                     stats["tokens_per_sec"] = total_tokens / duration
-                    stats["total_tokens"] = total_tokens
+                if total_prompt_tokens > 0:
+                    stats["input_tokens_per_sec"] = total_prompt_tokens / duration
+                if total_completion_tokens > 0:
+                    stats["output_tokens_per_sec"] = total_completion_tokens / duration
+        
+        # Streaming stats
+        streaming_requests = [r for r in successful if r.streaming]
+        stats["streaming_requests"] = len(streaming_requests)
+        stats["non_streaming_requests"] = len(successful) - len(streaming_requests)
         
         # Error breakdown
         if failed:

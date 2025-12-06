@@ -143,6 +143,8 @@ api:
   base_url: "http://localhost:8000"  # The address of your LLM server
   api_key: "your-key-here"           # If your server needs a password/key
   timeout: 60                        # Max time to wait for a response
+  streaming: true                    # Enable streaming for TTFT/TPOT metrics
+  endpoint_prefix: "/v1"             # API path prefix (see below)
 
 model:
   name: "gpt-3.5-turbo"              # The model name to send in requests
@@ -152,6 +154,25 @@ model:
 benchmark:
   output_dir: "results"              # Where to save reports
   export_formats: ["markdown", "csv", "json"] # Which report formats to create
+```
+
+### Endpoint Prefix for Different Providers
+
+The `endpoint_prefix` setting controls the API path prefix. Different LLM providers use different conventions:
+
+| Provider | `endpoint_prefix` | Full URL Example |
+|----------|-------------------|------------------|
+| **OpenAI** | `/v1` (default) | `https://api.openai.com/v1/chat/completions` |
+| **Ollama** | `/v1` | `http://localhost:11434/v1/chat/completions` |
+| **vLLM** | `/v1` | `http://localhost:8000/v1/chat/completions` |
+| **LiteLLM Proxy** | `""` (empty) | `http://localhost:4000/chat/completions` |
+| **Azure OpenAI** | `/openai/deployments/YOUR_DEPLOYMENT` | Custom path |
+
+**Example for LiteLLM Proxy:**
+```yaml
+api:
+  base_url: "http://localhost:4000"
+  endpoint_prefix: ""    # No prefix for LiteLLM proxy
 ```
 
 ---

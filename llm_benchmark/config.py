@@ -16,6 +16,8 @@ class APIConfig:
     base_url: str
     api_key: str = ""
     timeout: int = 60
+    streaming: bool = False  # Enable streaming for TTFT measurement
+    endpoint_prefix: str = "/v1"  # API path prefix: "/v1" for OpenAI, "" for LiteLLM proxy
 
 
 @dataclass
@@ -164,7 +166,7 @@ class BenchmarkConfig:
     scenario_defaults: ScenarioDefaults = field(default_factory=ScenarioDefaults)
     default_requests: int = 100
     default_concurrency: int = 10
-    capture_responses: bool = False
+    capture_request_response: bool = False  # Save prompt/response to view in HTML report
     output_dir: str = "results"
     export_formats: List[str] = field(default_factory=lambda: ["markdown", "csv"])
     quiet: bool = False
@@ -261,7 +263,9 @@ def parse_config(raw_config: Dict[str, Any], config_dir: Optional[Path] = None) 
     api_config = APIConfig(
         base_url=api_raw.get('base_url', 'http://localhost:8000'),
         api_key=api_raw.get('api_key', os.environ.get('OPENAI_API_KEY', '')),
-        timeout=api_raw.get('timeout', 60)
+        timeout=api_raw.get('timeout', 60),
+        streaming=api_raw.get('streaming', False),
+        endpoint_prefix=api_raw.get('endpoint_prefix', '/v1')
     )
     
     # Parse Model config
@@ -336,7 +340,7 @@ def parse_config(raw_config: Dict[str, Any], config_dir: Optional[Path] = None) 
         scenario_defaults=scenario_defaults,
         default_requests=benchmark_raw.get('default_requests', 100),
         default_concurrency=benchmark_raw.get('default_concurrency', 10),
-        capture_responses=benchmark_raw.get('capture_responses', False),
+        capture_request_response=benchmark_raw.get('capture_request_response', False),
         output_dir=benchmark_raw.get('output_dir', 'results'),
         export_formats=benchmark_raw.get('export_formats', ['markdown', 'csv']),
         quiet=benchmark_raw.get('quiet', False)
@@ -352,6 +356,8 @@ api:
   base_url: "http://localhost:8000"
   api_key: ""  # Or use environment variable OPENAI_API_KEY
   timeout: 60
+  streaming: true  # Enable streaming for TTFT/TPOT/ITL metrics (chat models only)
+  endpoint_prefix: "/v1"  # API path prefix: "/v1" for OpenAI/Ollama, "" for LiteLLM proxy
 
 # Model Configuration
 model:
@@ -418,7 +424,7 @@ scenario_file: "scenario.yml"
 benchmark:
   default_requests: 100
   default_concurrency: 10
-  capture_responses: false
+  capture_request_response: false  # Save prompt/response for HTML report
   output_dir: "results"
   export_formats:
     - "markdown"
