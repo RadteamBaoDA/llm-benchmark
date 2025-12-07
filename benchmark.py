@@ -11,7 +11,7 @@ import asyncio
 import sys
 from pathlib import Path
 
-from llm_benchmark.config import (
+from src.config import (
     BenchmarkConfig,
     load_config,
     save_default_config,
@@ -23,9 +23,9 @@ from llm_benchmark.config import (
     MockDataConfig,
     LoggingConfig
 )
-from llm_benchmark.engine import BenchmarkEngine, run_benchmark
-from llm_benchmark.exporters import export_results
-from llm_benchmark.html_report import generate_html_report, HTMLReportGenerator
+from src.engine import BenchmarkEngine, run_benchmark
+from src.exporters import export_results
+from src.html_report import generate_html_report, HTMLReportGenerator
 
 
 def parse_args() -> argparse.Namespace:

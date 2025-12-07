@@ -57,9 +57,12 @@ Documentation = "https://github.com/example/llm-benchmark-tool#readme"
 Repository = "https://github.com/example/llm-benchmark-tool.git"
 Issues = "https://github.com/example/llm-benchmark-tool/issues"
 
+[tool.setuptools.package-dir]
+"" = "src"
+
 [tool.setuptools.packages.find]
-where = ["."]
-include = ["llm_benchmark*"]
+where = ["src"]
+include = ["src*"]
 
 [tool.black]
 line-length = 100

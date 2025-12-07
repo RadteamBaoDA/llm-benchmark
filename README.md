@@ -80,7 +80,7 @@ llm-bench-tool/
 ├── benchmark.py           # Main CLI entry point
 ├── config.yml             # Main configuration file
 ├── scenario.yml           # Benchmark scenarios
-├── llm_benchmark/         # Main package
+├── src/                   # Main package (previously llm_benchmark)
 ├── tests/                 # Unit tests
 ├── results/               # Output directory
 └── reports/               # HTML reports directory
