@@ -13,7 +13,7 @@ import os
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from llm_benchmark.config import (
+from src.config import (
     BenchmarkConfig,
     APIConfig,
     ModelConfig,
@@ -29,7 +29,7 @@ from llm_benchmark.config import (
     save_default_scenario_config,
     init_default_configs
 )
-from llm_benchmark.mock_data import (
+from src.mock_data import (
     get_mock_generator,
     load_image_as_base64,
     MockRequest,
@@ -39,12 +39,12 @@ from llm_benchmark.mock_data import (
     RerankerMockGenerator,
     VisionMockGenerator
 )
-from llm_benchmark.metrics import (
+from src.metrics import (
     BenchmarkMetrics,
     MetricsCollector,
     RequestMetrics
 )
-from llm_benchmark.exporters import (
+from src.exporters import (
     BaseExporter,
     MarkdownExporter,
     CSVExporter,
@@ -1122,7 +1122,7 @@ class TestExportResults:
 # Timeseries Tests
 # ==============================================================================
 
-from llm_benchmark.timeseries import (
+from src.timeseries import (
     TimeseriesRecord,
     TimeseriesWriter,
     TimeseriesReader,
@@ -1366,7 +1366,7 @@ class TestLoadAllTimeseries:
 # HTML Report Tests
 # ==============================================================================
 
-from llm_benchmark.html_report import (
+from src.html_report import (
     HTMLReportGenerator,
     generate_html_report
 )
@@ -1507,7 +1507,7 @@ class TestGenerateHTMLReport:
 # Engine JMeter-Style Mode Tests
 # ============================================================================
 
-from llm_benchmark.engine import BenchmarkMode, LoadProfile, QueueMetrics
+from src.engine import BenchmarkMode, LoadProfile, QueueMetrics
 
 
 class TestBenchmarkMode:
@@ -1850,7 +1850,7 @@ class TestDebugLogger:
     
     def test_debug_logger_creation(self):
         """Test DebugLogger instantiation."""
-        from llm_benchmark.debug_logger import DebugLogger
+        from src.debug_logger import DebugLogger
         import logging
         
         logger = DebugLogger(
@@ -1868,7 +1868,7 @@ class TestDebugLogger:
     
     def test_debug_logger_level(self):
         """Test debug logger level changes."""
-        from llm_benchmark.debug_logger import DebugLogger
+        from src.debug_logger import DebugLogger
         import logging
         
         logger = DebugLogger(
@@ -1888,7 +1888,7 @@ class TestDebugLogger:
     
     def test_debug_logger_elapsed(self):
         """Test elapsed time formatting."""
-        from llm_benchmark.debug_logger import DebugLogger
+        from src.debug_logger import DebugLogger
         import logging
         import time
         
@@ -1912,7 +1912,7 @@ class TestDebugLogger:
     
     def test_debug_logger_mode_start(self):
         """Test mode_start sets state correctly."""
-        from llm_benchmark.debug_logger import DebugLogger
+        from src.debug_logger import DebugLogger
         import logging
         
         logger = DebugLogger(
@@ -1930,7 +1930,7 @@ class TestDebugLogger:
     
     def test_debug_logger_request_submit(self):
         """Test request_submit increments counter."""
-        from llm_benchmark.debug_logger import DebugLogger
+        from src.debug_logger import DebugLogger
         import logging
         
         logger = DebugLogger(
@@ -1954,7 +1954,7 @@ class TestDebugLoggerGlobalFunctions:
     
     def test_get_debug_logger(self):
         """Test get_debug_logger returns consistent instance."""
-        from llm_benchmark.debug_logger import get_debug_logger, reset_debug_logger
+        from src.debug_logger import get_debug_logger, reset_debug_logger
         
         # Reset first to ensure clean state
         reset_debug_logger()
@@ -1966,7 +1966,7 @@ class TestDebugLoggerGlobalFunctions:
     
     def test_reset_debug_logger(self):
         """Test reset_debug_logger creates new instance."""
-        from llm_benchmark.debug_logger import get_debug_logger, reset_debug_logger
+        from src.debug_logger import get_debug_logger, reset_debug_logger
         
         logger1 = get_debug_logger()
         logger2 = reset_debug_logger(console_output=True)
@@ -1975,7 +1975,7 @@ class TestDebugLoggerGlobalFunctions:
     
     def test_enable_disable_debug_logging(self):
         """Test enable/disable debug logging."""
-        from llm_benchmark.debug_logger import (
+        from src.debug_logger import (
             enable_debug_logging, 
             disable_debug_logging, 
             get_debug_logger,
@@ -2002,80 +2002,80 @@ class TestModeRunners:
     
     def test_get_mode_runner_ramp_up(self):
         """Test get_mode_runner returns RampUpRunner."""
-        from llm_benchmark.mode_runners import get_mode_runner, RampUpRunner
-        from llm_benchmark.modes import BenchmarkMode
+        from src.mode_runners import get_mode_runner, RampUpRunner
+        from src.modes import BenchmarkMode
         
         runner = get_mode_runner(BenchmarkMode.RAMP_UP)
         assert isinstance(runner, RampUpRunner)
     
     def test_get_mode_runner_stepping(self):
         """Test get_mode_runner returns SteppingRunner."""
-        from llm_benchmark.mode_runners import get_mode_runner, SteppingRunner
-        from llm_benchmark.modes import BenchmarkMode
+        from src.mode_runners import get_mode_runner, SteppingRunner
+        from src.modes import BenchmarkMode
         
         runner = get_mode_runner(BenchmarkMode.STEPPING)
         assert isinstance(runner, SteppingRunner)
     
     def test_get_mode_runner_spike(self):
         """Test get_mode_runner returns SpikeRunner."""
-        from llm_benchmark.mode_runners import get_mode_runner, SpikeRunner
-        from llm_benchmark.modes import BenchmarkMode
+        from src.mode_runners import get_mode_runner, SpikeRunner
+        from src.modes import BenchmarkMode
         
         runner = get_mode_runner(BenchmarkMode.SPIKE)
         assert isinstance(runner, SpikeRunner)
     
     def test_get_mode_runner_constant_rate(self):
         """Test get_mode_runner returns ConstantRateRunner."""
-        from llm_benchmark.mode_runners import get_mode_runner, ConstantRateRunner
-        from llm_benchmark.modes import BenchmarkMode
+        from src.mode_runners import get_mode_runner, ConstantRateRunner
+        from src.modes import BenchmarkMode
         
         runner = get_mode_runner(BenchmarkMode.CONSTANT_RATE)
         assert isinstance(runner, ConstantRateRunner)
     
     def test_get_mode_runner_arrivals(self):
         """Test get_mode_runner returns ArrivalsRunner."""
-        from llm_benchmark.mode_runners import get_mode_runner, ArrivalsRunner
-        from llm_benchmark.modes import BenchmarkMode
+        from src.mode_runners import get_mode_runner, ArrivalsRunner
+        from src.modes import BenchmarkMode
         
         runner = get_mode_runner(BenchmarkMode.ARRIVALS)
         assert isinstance(runner, ArrivalsRunner)
     
     def test_get_mode_runner_ultimate(self):
         """Test get_mode_runner returns UltimateRunner."""
-        from llm_benchmark.mode_runners import get_mode_runner, UltimateRunner
-        from llm_benchmark.modes import BenchmarkMode
+        from src.mode_runners import get_mode_runner, UltimateRunner
+        from src.modes import BenchmarkMode
         
         runner = get_mode_runner(BenchmarkMode.ULTIMATE)
         assert isinstance(runner, UltimateRunner)
     
     def test_get_mode_runner_duration(self):
         """Test get_mode_runner returns DurationRunner."""
-        from llm_benchmark.mode_runners import get_mode_runner, DurationRunner
-        from llm_benchmark.modes import BenchmarkMode
+        from src.mode_runners import get_mode_runner, DurationRunner
+        from src.modes import BenchmarkMode
         
         runner = get_mode_runner(BenchmarkMode.DURATION)
         assert isinstance(runner, DurationRunner)
     
     def test_get_mode_runner_parallel_returns_none(self):
         """Test get_mode_runner returns None for PARALLEL mode."""
-        from llm_benchmark.mode_runners import get_mode_runner
-        from llm_benchmark.modes import BenchmarkMode
+        from src.mode_runners import get_mode_runner
+        from src.modes import BenchmarkMode
         
         runner = get_mode_runner(BenchmarkMode.PARALLEL)
         assert runner is None
     
     def test_get_mode_runner_controlled_returns_none(self):
         """Test get_mode_runner returns None for CONTROLLED mode."""
-        from llm_benchmark.mode_runners import get_mode_runner
-        from llm_benchmark.modes import BenchmarkMode
+        from src.mode_runners import get_mode_runner
+        from src.modes import BenchmarkMode
         
         runner = get_mode_runner(BenchmarkMode.CONTROLLED)
         assert runner is None
     
     def test_mode_runner_debug_flag(self):
         """Test mode runner accepts debug flag."""
-        from llm_benchmark.mode_runners import RampUpRunner
-        from llm_benchmark.debug_logger import DebugLogger
+        from src.mode_runners import RampUpRunner
+        from src.debug_logger import DebugLogger
         import logging
         
         debug_logger = DebugLogger(
@@ -2100,7 +2100,7 @@ class TestQueueMetricsExtended:
     
     def test_queue_metrics_record_rejection(self):
         """Test recording rejections."""
-        from llm_benchmark.modes import QueueMetrics
+        from src.modes import QueueMetrics
         
         qm = QueueMetrics()
         assert qm.rejection_count == 0
@@ -2113,7 +2113,7 @@ class TestQueueMetricsExtended:
     
     def test_queue_metrics_record_timeout(self):
         """Test recording timeouts."""
-        from llm_benchmark.modes import QueueMetrics
+        from src.modes import QueueMetrics
         
         qm = QueueMetrics()
         assert qm.timeout_count == 0
@@ -2126,7 +2126,7 @@ class TestQueueMetricsExtended:
     
     def test_queue_metrics_add_queue_sample(self):
         """Test adding queue samples."""
-        from llm_benchmark.modes import QueueMetrics
+        from src.modes import QueueMetrics
         
         qm = QueueMetrics()
         assert len(qm.queue_depth_samples) == 0
@@ -2140,7 +2140,7 @@ class TestQueueMetricsExtended:
     
     def test_queue_metrics_add_wait_time(self):
         """Test adding wait times with threshold."""
-        from llm_benchmark.modes import QueueMetrics
+        from src.modes import QueueMetrics
         
         qm = QueueMetrics()
         
@@ -2155,7 +2155,7 @@ class TestQueueMetricsExtended:
     
     def test_queue_metrics_add_processing_time(self):
         """Test adding processing times."""
-        from llm_benchmark.modes import QueueMetrics
+        from src.modes import QueueMetrics
         
         qm = QueueMetrics()
         
@@ -2182,8 +2182,8 @@ class TestLoadProfileExtended:
     
     def test_load_profile_from_scenario(self):
         """Test LoadProfile.from_scenario method."""
-        from llm_benchmark.modes import LoadProfile
-        from llm_benchmark.config import ScenarioConfig
+        from src.modes import LoadProfile
+        from src.config import ScenarioConfig
         
         scenario = ScenarioConfig(
             name="test",
@@ -2212,8 +2212,8 @@ class TestLoadProfileExtended:
     
     def test_load_profile_from_scenario_with_stages(self):
         """Test LoadProfile.from_scenario with stages."""
-        from llm_benchmark.modes import LoadProfile
-        from llm_benchmark.config import ScenarioConfig
+        from src.modes import LoadProfile
+        from src.config import ScenarioConfig
         
         scenario = ScenarioConfig(
             name="test",
@@ -2239,7 +2239,7 @@ class TestBenchmarkModeExtended:
     
     def test_benchmark_mode_from_string_case_insensitive(self):
         """Test BenchmarkMode.from_string is case insensitive."""
-        from llm_benchmark.modes import BenchmarkMode
+        from src.modes import BenchmarkMode
         
         assert BenchmarkMode.from_string("PARALLEL") == BenchmarkMode.PARALLEL
         assert BenchmarkMode.from_string("Parallel") == BenchmarkMode.PARALLEL
@@ -2250,14 +2250,14 @@ class TestBenchmarkModeExtended:
     
     def test_benchmark_mode_from_string_invalid(self):
         """Test BenchmarkMode.from_string with invalid value."""
-        from llm_benchmark.modes import BenchmarkMode
+        from src.modes import BenchmarkMode
         
         with pytest.raises(ValueError):
             BenchmarkMode.from_string("invalid_mode")
     
     def test_benchmark_mode_all_values(self):
         """Test all BenchmarkMode values can be converted."""
-        from llm_benchmark.modes import BenchmarkMode
+        from src.modes import BenchmarkMode
         
         for mode in BenchmarkMode:
             result = BenchmarkMode.from_string(mode.value)

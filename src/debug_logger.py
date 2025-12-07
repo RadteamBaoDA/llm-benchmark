@@ -174,7 +174,7 @@ def configure_structlog(
         root_logger.addHandler(handler)
     
     # Prevent propagation of benchmark logs
-    benchmark_logger = logging.getLogger("llm_benchmark")
+    benchmark_logger = logging.getLogger("src")
     benchmark_logger.setLevel(level)
     benchmark_logger.propagate = False
     for handler in handlers:
@@ -198,7 +198,7 @@ class DebugLogger:
     
     def __init__(
         self, 
-        name: str = "llm_benchmark", 
+        name: str = "src", 
         level: int = logging.DEBUG,
         console_output: bool = False, 
         file_output: bool = True,
@@ -656,7 +656,7 @@ def disable_debug_logging() -> None:
     logger.set_level(logging.WARNING)
 
 
-def get_structlog_logger(name: str = "llm_benchmark") -> FilteringBoundLogger:
+def get_structlog_logger(name: str = "src") -> FilteringBoundLogger:
     """
     Get a structlog logger for use in other modules.
     
@@ -664,7 +664,7 @@ def get_structlog_logger(name: str = "llm_benchmark") -> FilteringBoundLogger:
     of the application while maintaining consistent configuration.
     
     Example:
-        from llm_benchmark.debug_logger import get_structlog_logger
+        from src.debug_logger import get_structlog_logger
         
         log = get_structlog_logger(__name__)
         log.info("processing", item_id=123, status="started")

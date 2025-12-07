@@ -58,6 +58,16 @@ from .metrics import RequestMetrics, BenchmarkMetrics, MetricsCollector
 from .exporters import export_results
 from .timeseries import TimeseriesWriter, TimeseriesReader, load_all_timeseries
 from .html_report import HTMLReportGenerator, generate_html_report
+from .event_bus import EventBus
+from .events import (
+    Event,
+    RequestSubmitted,
+    RequestStarted,
+    RequestCompleted,
+    RequestFailed,
+    ScenarioStarted,
+    ScenarioCompleted,
+)
 
 __all__ = [
     # Config
@@ -99,6 +109,15 @@ __all__ = [
     "RequestMetrics",
     "BenchmarkMetrics",
     "MetricsCollector",
+    # Eventing
+    "EventBus",
+    "Event",
+    "RequestSubmitted",
+    "RequestStarted",
+    "RequestCompleted",
+    "RequestFailed",
+    "ScenarioStarted",
+    "ScenarioCompleted",
     # Exporters
     "export_results",
     # Timeseries
